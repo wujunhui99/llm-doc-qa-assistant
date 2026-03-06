@@ -21,7 +21,7 @@ Responsibilities:
 
 Default runtime:
 - Port: `:8080`
-- Entry: `backend/services/api-go/cmd/server`
+- Entry: `backend/services/api-go/cmd/api`
 
 ### Service 2: `core-go-rpc` (Go domain/rule service)
 Responsibilities:
@@ -120,6 +120,5 @@ Base: `/api`
 - Stable external API maintained while internal services evolve.
 
 ## 9. Migration Status
-- Legacy monolith entry `backend/cmd/server` remains for transition compatibility.
 - Target runtime is three-service topology under `backend/services/*`.
 - Next migration step: move document/thread/turn state from JSON store to MySQL schema.

@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	authapp "llm-doc-qa-assistant/backend/internal/application/auth"
-	"llm-doc-qa-assistant/backend/internal/infrastructure/minio"
-	"llm-doc-qa-assistant/backend/internal/infrastructure/mysql"
-	"llm-doc-qa-assistant/backend/internal/infrastructure/security"
-	"llm-doc-qa-assistant/backend/internal/store"
 	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
+	authapp "llm-doc-qa-assistant/backend/services/core-go-rpc/internal/application/auth"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/infrastructure/minio"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/infrastructure/mysql"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/infrastructure/security"
 	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/rpc"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/store"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"

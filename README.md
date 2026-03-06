@@ -48,8 +48,29 @@ LLM_RPC_ADDR=127.0.0.1:19091 go run ./services/core-go-rpc/cmd/server
 Terminal C (Go API gateway):
 ```bash
 cd backend
-CORE_RPC_ADDR=127.0.0.1:19090 PORT=8080 go run ./services/api-go/cmd/server
+CORE_RPC_ADDR=127.0.0.1:19090 PORT=8080 go run ./services/api-go/cmd/api
 ```
+
+Or run by one command (from repo root):
+```bash
+make start all
+make stop all
+make restart all
+```
+
+Single service control:
+```bash
+make start llm
+make restart core
+make stop api
+make restart frontend
+```
+
+Service aliases:
+- `llm` / `llm-python-rpc` / `python` (`:19091`)
+- `core` / `core-go-rpc` / `go-rpc` (`:19090`)
+- `api` / `api-go` (`:8080`)
+- `frontend` / `fe` / `web` (`:5173`)
 
 Optional shared env overrides:
 ```bash

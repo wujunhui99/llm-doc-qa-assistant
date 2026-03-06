@@ -5,6 +5,7 @@ Go + Python microservice split has been scaffolded and implemented with gRPC con
 - external API remains stable on `api-go` (`/api/*`),
 - domain logic runs in `core-go-rpc`,
 - answer generation is isolated in `llm-python-rpc`.
+- unit-test-first workflow is required for backend changes (tests must be added/updated in same PR).
 
 ## Next Focus
 - Move document/thread/turn persistence from JSON store to MySQL schema.

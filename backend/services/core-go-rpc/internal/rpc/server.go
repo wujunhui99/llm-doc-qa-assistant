@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	authapp "llm-doc-qa-assistant/backend/internal/application/auth"
-	domainauth "llm-doc-qa-assistant/backend/internal/domain/auth"
-	"llm-doc-qa-assistant/backend/internal/ingest"
-	"llm-doc-qa-assistant/backend/internal/qa"
-	"llm-doc-qa-assistant/backend/internal/store"
-	"llm-doc-qa-assistant/backend/internal/types"
 	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
+	authapp "llm-doc-qa-assistant/backend/services/core-go-rpc/internal/application/auth"
+	domainauth "llm-doc-qa-assistant/backend/services/core-go-rpc/internal/domain/auth"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/ingest"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/qa"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/store"
+	"llm-doc-qa-assistant/backend/services/core-go-rpc/internal/types"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -420,7 +420,8 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 		UpdatedAt:   now,
 	}
 
-	answer := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns)
+	activeProvider := s.store.GetProvider().ActiveProvider
+	answer := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider)
 	turn.Answer = answer
 
 	items := []types.TurnItem{
@@ -590,7 +591,14 @@ func (s *Server) getOwnedThread(threadID, ownerID string) (types.Thread, error) 
 	return thread, nil
 }
 
-func (s *Server) generateAnswer(ctx context.Context, ownerID string, turn types.Turn, retrieved []qa.ScoredChunk, previousTurns []types.Turn) string {
+func (s *Server) generateAnswer(
+	ctx context.Context,
+	ownerID string,
+	turn types.Turn,
+	retrieved []qa.ScoredChunk,
+	previousTurns []types.Turn,
+	activeProvider string,
+) string {
 	if s.llmClient == nil {
 		return fallbackAnswer(turn.Question, retrieved, previousTurns)
 	}
@@ -627,6 +635,9 @@ func (s *Server) generateAnswer(ctx context.Context, ownerID string, turn types.
 
 	if s.internalServiceKey != "" {
 		ctx = metadata.AppendToOutgoingContext(ctx, "x-service-token", s.internalServiceKey)
+	}
+	if strings.TrimSpace(activeProvider) != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-active-provider", strings.TrimSpace(activeProvider))
 	}
 
 	resp, err := s.llmClient.GenerateAnswer(ctx, llmReq)

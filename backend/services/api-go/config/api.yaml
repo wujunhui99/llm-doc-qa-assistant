@@ -1,0 +1,6 @@
+port: "8080"
+core_rpc_addr: "127.0.0.1:19090"
+read_header_timeout_seconds: 5
+read_timeout_seconds: 20
+write_timeout_seconds: 60
+idle_timeout_seconds: 60

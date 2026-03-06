@@ -6,6 +6,7 @@
 - Retrieval Relevance@K
 - Scope Resolution Accuracy (`@doc` / `@all`)
 - Tenant Isolation Leak Rate
+- Unit Test Pass Rate (backend/services + core domain)
 - Worktree Boot Success Rate (agent self-test runs)
 - CDP UI Test Pass Rate
 - UI Bug Reproduction-and-Validation Success Rate
@@ -17,8 +18,16 @@
 - Multi-turn Continuity >= 80%
 - Scope Resolution Accuracy >= 99%
 - Tenant Isolation Leak Rate = 0
+- Unit Test Pass Rate = 100% on changed modules
 - Worktree Boot Success Rate >= 95%
 - CDP UI Test Pass Rate >= 90%
 - UI Bug Reproduction-and-Validation Success Rate >= 85%
 - P95 Turn Latency <= 8s (non-streaming equivalent)
 - Critical regression count = 0
+
+## Engineering Process Requirement
+- Any backend logic change must include corresponding unit tests in the same change set.
+- A change is not complete unless unit tests are added/updated and pass locally.
+- Minimum local verification before commit:
+  - `cd backend && go test ./...`
+  - If Python service logic changed: run service-level unit tests for `backend/services/llm-python-rpc`.
