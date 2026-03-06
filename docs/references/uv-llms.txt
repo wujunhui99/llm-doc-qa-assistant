@@ -1,0 +1,2 @@
+Python uv tooling reference notes.
+Record dependency and environment conventions here.

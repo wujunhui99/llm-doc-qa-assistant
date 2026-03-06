@@ -1,0 +1,2 @@
+Design system guidance for LLM-assisted UI development.
+Add finalized references and distilled rules here.

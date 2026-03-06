@@ -1,0 +1,2 @@
+Nixpacks deployment reference notes for this project.
+Track exact build instructions after first successful deployment.
