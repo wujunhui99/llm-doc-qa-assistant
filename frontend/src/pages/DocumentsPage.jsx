@@ -59,6 +59,23 @@ export function DocumentsPage({ token, user }) {
     }
   }
 
+  const downloadDoc = async (doc) => {
+    try {
+      setError('')
+      const blob = await api.downloadDocument(token, doc.id)
+      const objectURL = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = objectURL
+      anchor.download = doc.name || 'document.bin'
+      document.body.appendChild(anchor)
+      anchor.click()
+      document.body.removeChild(anchor)
+      URL.revokeObjectURL(objectURL)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   return (
     <section className="panel">
       <h2>Document Management</h2>
@@ -100,6 +117,7 @@ export function DocumentsPage({ token, user }) {
                   <td>{doc.chunk_count}</td>
                   <td>{new Date(doc.created_at).toLocaleString()}</td>
                   <td>
+                    <button onClick={() => downloadDoc(doc)}>Download</button>
                     <button className="danger-btn" onClick={() => removeDoc(doc)}>Delete</button>
                   </td>
                 </tr>

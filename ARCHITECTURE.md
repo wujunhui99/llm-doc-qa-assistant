@@ -8,56 +8,81 @@ Build a Smart Document QA Assistant that supports:
 - per-user document isolation,
 - query scope controls (`@doc` and `@all`),
 - provider switching,
-with a harness-style turn model.
+with a Go + Python microservice architecture.
 
-## 2. Implemented Top-Level Architecture
-- Frontend (`frontend/`, React + Vite):
-  - Auth page (register/login)
-  - Document Management page
-  - Agent QA page
-  - System Configuration page
-- Backend (`backend/`, Go stdlib HTTP):
-  - API layer (`internal/api`)
-  - Auth/KDF/session layer (`internal/auth`)
-  - Ingestion parser/chunker (`internal/ingest`)
-  - Scope resolver + retrieval/ranking (`internal/qa`)
-  - State + audit persistence (`internal/store`)
-- Storage:
-  - Metadata: JSON state file (`backend/data/state.json`)
-  - Raw files: filesystem (`backend/data/files/...`)
-  - Retrieval index: chunk arrays per document in state
-  - Audit log: JSONL (`backend/data/audit.log`)
+## 2. Microservice Topology
 
-## 3. Runtime Model
-- Thread: conversation session (`threads` map).
-- Turn: one QA request lifecycle (`turns` map).
-- Item: turn event records (`turn_items` map), emitted as stream events by `/stream` endpoint.
+### Service 1: `api-go` (frontend HTTP gateway)
+Responsibilities:
+- Exposes stable external `/api/*` contract to frontend.
+- Parses HTTP request/body/multipart/SSE.
+- Performs lightweight auth header presence checks.
+- Forwards business operations to `core-go-rpc` over gRPC.
 
-Turn completion contract:
-- scope resolved (`all` or `doc`),
-- retrieval executed inside user ownership boundary,
-- final answer generated,
-- citations returned,
-- status reaches terminal (`completed`).
+Default runtime:
+- Port: `:8080`
+- Entry: `backend/services/api-go/cmd/server`
 
-## 4. Core Backend Modules
-- `internal/auth/password.go`:
-  - PBKDF2-HMAC-SHA256 password hashing.
-  - Session token generation.
-- `internal/ingest/parser.go`:
-  - TXT/Markdown plain text parse.
-  - Lightweight PDF text extraction fallback.
-- `internal/ingest/chunker.go`:
-  - fixed-size chunking with overlap.
-- `internal/qa/scope.go`:
-  - resolves explicit payload scope or message prefix (`@all`, `@doc(...)`).
-- `internal/qa/retrieval.go`:
-  - token-overlap ranking with CJK bigram support.
-- `internal/store/store.go`:
-  - user/session/document/thread/turn persistence.
-  - audit event append.
+### Service 2: `core-go-rpc` (Go domain/rule service)
+Responsibilities:
+- Auth and session lifecycle (DDD auth module + MySQL repositories).
+- Document metadata/chunk persistence and ownership checks.
+- Document binary storage operations via MinIO.
+- Thread/turn lifecycle, scope resolution, retrieval chunk selection.
+- Calls Python LLM service for answer generation.
 
-## 5. API Contract (Implemented)
+Default runtime:
+- Port: `:19090`
+- Entry: `backend/services/core-go-rpc/cmd/server`
+
+### Service 3: `llm-python-rpc` (Python LLM service)
+Responsibilities:
+- Implements `LlmService` gRPC contract.
+- Receives scope-constrained retrieval contexts from `core-go-rpc`.
+- Generates grounded answer text from contexts + conversation history.
+
+Default runtime:
+- Port: `:19091`
+- Entry: `backend/services/llm-python-rpc/app/server.py`
+
+## 3. Inter-Service Contract
+
+Proto source:
+- `backend/proto/qa/v1/qa.proto`
+
+Generated stubs:
+- Go: `backend/proto/gen/go/qa/v1`
+- Python: `backend/services/llm-python-rpc/app/generated/qa/v1`
+
+Service contracts:
+- `api-go -> core-go-rpc`: `qa.v1.CoreService`
+- `core-go-rpc -> llm-python-rpc`: `qa.v1.LlmService`
+
+Mandatory identity/scope fields carried into Python call:
+- `owner_user_id`
+- `thread_id`
+- `turn_id`
+- `scope_type`
+- `scope_doc_ids`
+
+## 4. Persistence Architecture
+- MySQL:
+  - `users`, `user_sessions` (implemented)
+  - document/thread/turn relational migration (planned)
+- MinIO:
+  - raw document files, object key `{owner_user_id}/{doc_id}.{ext}`
+- JSON local state (current transitional store):
+  - documents/chunks/threads/turns/provider config
+
+## 5. Runtime Turn Model (Cross-Service)
+1. Frontend sends `POST /api/threads/{thread_id}/turns` to `api-go`.
+2. `api-go` forwards request to `core-go-rpc` `CreateTurn`.
+3. `core-go-rpc` authenticates token, validates ownership + scope.
+4. `core-go-rpc` retrieves scoped chunks and calls Python `GenerateAnswer`.
+5. `core-go-rpc` persists turn/items and returns citations + answer.
+6. `api-go` returns turn JSON and can replay turn events via SSE stream endpoint.
+
+## 6. External API Contract (Frontend-facing)
 Base: `/api`
 
 - Auth:
@@ -66,46 +91,35 @@ Base: `/api`
   - `POST /auth/logout`
   - `GET /auth/me`
 - Documents:
-  - `POST /documents/upload` (multipart `file`)
+  - `POST /documents/upload`
   - `GET /documents`
   - `GET /documents/{id}`
+  - `GET /documents/{id}/download`
   - `DELETE /documents/{id}?confirm=true`
 - QA:
   - `GET /threads`
   - `POST /threads`
   - `POST /threads/{thread_id}/turns`
-  - `GET /threads/{thread_id}/turns/{turn_id}/stream` (SSE)
+  - `GET /threads/{thread_id}/turns/{turn_id}/stream`
 - Config:
   - `GET /config`
   - `PUT /config`
   - `GET /config/health`
 
-## 6. Isolation and Safety Controls
-- Protected APIs require bearer token.
-- Ownership predicate enforced for document/thread reads and writes.
-- Retrieval source docs always selected from `owner_user_id == current_user_id`.
-- Upload validation:
-  - type allowlist: TXT/Markdown/PDF,
-  - size limit: 10MB.
-- Delete API requires explicit confirmation query flag.
-- Audit events recorded for:
-  - login success/failure,
-  - logout,
-  - unauthorized access,
-  - document deletion,
-  - provider changes.
+## 7. Security and Isolation Controls
+- `core-go-rpc` is policy enforcement point for tenant/ownership checks.
+- Upload allowlist is enforced server-side: `.txt`, `.md`, `.markdown`, `.pdf`.
+- Session token validation performed in `core-go-rpc` for all protected operations.
+- Inter-service auth header `x-service-token` is supported for `core-go-rpc -> llm-python-rpc`.
+- Python service receives already-scoped contexts and must not broaden scope.
 
-## 7. Testing Coverage (Current)
-- Unit tests:
-  - password hash/verify,
-  - scope resolver,
-  - retrieval ranking.
-- API tests (httptest):
-  - register/login flow,
-  - cross-user document isolation.
+## 8. Reliability Controls
+- Timeouts on HTTP->gRPC and Core->LLM gRPC calls.
+- Core fallback answer path when LLM call fails.
+- Audit log for auth failures, unauthorized access, and destructive actions.
+- Stable external API maintained while internal services evolve.
 
-## 8. Known Gaps vs Target Architecture
-- Uses file-backed JSON state instead of SQL + vector DB (MVP simplification).
-- Provider routing is config-level only (no real external provider invocation yet).
-- PDF parser is lightweight and not full-fidelity for complex PDFs.
-- No CI/CD workflow YAML generated yet.
+## 9. Migration Status
+- Legacy monolith entry `backend/cmd/server` remains for transition compatibility.
+- Target runtime is three-service topology under `backend/services/*`.
+- Next migration step: move document/thread/turn state from JSON store to MySQL schema.

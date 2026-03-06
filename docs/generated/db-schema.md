@@ -1,79 +1,45 @@
-# DB Schema Snapshot (Current MVP File-Backed State)
+# DB Schema Snapshot (Go + Python Microservices)
 
-Current storage implementation uses a JSON state file (`backend/data/state.json`) plus filesystem artifacts.
+## Current persistence
+- MySQL: auth/session data (implemented)
+- MinIO: raw document files (implemented)
+- JSON state: document/chunk/thread/turn/provider (transitional)
 
-## State root object
-- `users: map[user_id]User`
-- `sessions: map[token]Session`
-- `documents: map[doc_id]Document`
-- `chunks: map[doc_id][]Chunk`
-- `threads: map[thread_id]Thread`
-- `turns: map[turn_id]Turn`
-- `turn_items: map[turn_id][]TurnItem`
-- `provider: ProviderConfig`
-- `email_to_user: map[email]user_id`
+## Runtime ownership
+- `api-go`: no direct DB writes.
+- `core-go-rpc`: writes MySQL auth/session and transitional state.
+- `llm-python-rpc`: stateless answer service (no DB yet).
 
-## Model fields
-### User
-- `id`
-- `email`
-- `password_hash`
-- `created_at`
+## Target persistence split
+- Go domain DB (MySQL):
+  - users
+  - user_sessions
+  - documents (target)
+  - threads/turns metadata (target)
+- Python retrieval stores (target):
+  - vector index / embedding collections
+  - retrieval job metadata
 
-### Session
-- `token`
-- `user_id`
-- `created_at`
-- `expires_at`
+## MySQL tables currently implemented
+### users
+- `id VARCHAR(64) PRIMARY KEY`
+- `email VARCHAR(255) UNIQUE NOT NULL`
+- `password_hash VARCHAR(255) NOT NULL`
+- `created_at DATETIME(6) NOT NULL`
 
-### Document
-- `id`
+### user_sessions
+- `token VARCHAR(128) PRIMARY KEY`
+- `user_id VARCHAR(64) NOT NULL` (FK -> `users.id`)
+- `created_at DATETIME(6) NOT NULL`
+- `expires_at DATETIME(6) NOT NULL`
+
+## MinIO object storage
+- default bucket: `qa-documents`
+- object key: `{owner_user_id}/{doc_id}.{ext}`
+
+## Cross-service identity fields (must be preserved)
 - `owner_user_id`
-- `name`
-- `size_bytes`
-- `mime_type`
-- `storage_path`
-- `status` (`indexing|ready|failed`)
-- `chunk_count`
-- `created_at`
-- `last_updated_at`
-
-### Chunk
-- `id`
-- `doc_id`
-- `index`
-- `content`
-
-### Thread
-- `id`
-- `owner_user_id`
-- `title`
-- `created_at`
-
-### Turn
-- `id`
 - `thread_id`
-- `owner_user_id`
-- `question`
-- `answer`
-- `status`
-- `scope_type` (`all|doc`)
-- `scope_doc_ids` (array)
-- `created_at`
-- `updated_at`
-
-### TurnItem
-- `id`
 - `turn_id`
-- `item_type` (`message|retrieval|final`)
-- `payload` (JSON object)
-- `created_at`
-
-## Ownership isolation keys
-- `documents.owner_user_id`
-- `threads.owner_user_id`
-- `turns.owner_user_id`
-
-## Raw artifact storage
-- Uploaded files: `backend/data/files/{owner_user_id}/{doc_id}.{ext}`
-- Audit log: `backend/data/audit.log` (JSONL)
+- `scope_type`
+- `scope_doc_ids`

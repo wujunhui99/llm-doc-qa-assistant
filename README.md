@@ -2,29 +2,65 @@
 
 MVP implementation based on `AGENTS.md` + architecture/spec docs.
 
-## Stack
+## Stack Direction (Go + Python Microservices)
 - Frontend: React (Vite)
-- Backend: Go (stdlib HTTP server)
+- `api-go`: frontend HTTP gateway (`/api/*`)
+- `core-go-rpc`: Go domain/rule service (auth, docs, scope, turn orchestration)
+- `llm-python-rpc`: Python LLM answer service
+- Middleware:
+  - MySQL (auth/session persistence)
+  - MinIO (document binary storage)
 
-## Features implemented
-- Register/Login/Logout/Me with session token.
-- Password hashing with PBKDF2-HMAC-SHA256.
-- Document upload/list/get/delete (TXT/Markdown/PDF).
-- Parsing + chunking + retrieval index persistence.
-- Per-user document isolation enforced in APIs and retrieval.
-- QA threads/turns with `@all` + `@doc(...)` scope resolver.
-- Grounded answer response with citations.
-- Provider configuration API (`mock/openai/claude/local`) + health endpoint.
-- Audit log for auth failures, logout, delete, provider changes.
+## Directory Layout (backend)
+- `backend/services/api-go`: HTTP API gateway
+- `backend/services/core-go-rpc`: Go core RPC service
+- `backend/services/llm-python-rpc`: Python LLM RPC service
+- `backend/proto/qa/v1/qa.proto`: gRPC contract source
+- `backend/proto/gen/go/qa/v1`: Go generated stubs
 
-## Backend run
+## Middleware startup (docker-compose)
 ```bash
-cd backend
-GOCACHE=/tmp/go-build go test ./...
-go run ./cmd/server
+docker compose up -d
 ```
 
-The backend starts at `http://localhost:8080`.
+This starts:
+- MySQL (`127.0.0.1:3306`)
+- MinIO API (`127.0.0.1:9000`)
+- MinIO Console (`127.0.0.1:9001`)
+
+## Run microservices
+
+Terminal A (Python LLM RPC):
+```bash
+cd backend/services/llm-python-rpc
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+LLM_RPC_ADDR=:19091 python -m app.server
+```
+
+Terminal B (Go core RPC):
+```bash
+cd backend
+LLM_RPC_ADDR=127.0.0.1:19091 go run ./services/core-go-rpc/cmd/server
+```
+
+Terminal C (Go API gateway):
+```bash
+cd backend
+CORE_RPC_ADDR=127.0.0.1:19090 PORT=8080 go run ./services/api-go/cmd/server
+```
+
+Optional shared env overrides:
+```bash
+export MYSQL_DSN='app:app123456@tcp(127.0.0.1:3306)/llm_doc_qa?parseTime=true&charset=utf8mb4&loc=Local'
+export MINIO_ENDPOINT='127.0.0.1:9000'
+export MINIO_ACCESS_KEY='minioadmin'
+export MINIO_SECRET_KEY='minioadmin123'
+export MINIO_BUCKET='qa-documents'
+export MINIO_USE_SSL='false'
+export INTERNAL_SERVICE_TOKEN='change-me-in-prod'
+```
 
 ## Frontend run
 ```bash
@@ -33,11 +69,8 @@ npm install
 npm run dev
 ```
 
-Frontend default API target is `http://localhost:8080`.
-Override with `VITE_API_BASE_URL`.
-
-## Core API routes
+## External API (via `api-go`)
 - Auth: `/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`
-- Documents: `/api/documents/upload`, `/api/documents`, `/api/documents/{id}`
+- Documents: `/api/documents/upload`, `/api/documents`, `/api/documents/{id}`, `/api/documents/{id}/download`
 - QA: `/api/threads`, `/api/threads/{thread_id}/turns`, `/api/threads/{thread_id}/turns/{turn_id}/stream`
 - Config: `/api/config`, `/api/config/health`

@@ -35,6 +35,20 @@ export const api = {
     form.append('file', file)
     return request('/api/documents/upload', { method: 'POST', token, body: form, isFormData: true })
   },
+  downloadDocument: async (token, docId) => {
+    const res = await fetch(`${API_BASE_URL}/api/documents/${docId}/download`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      const msg = data?.error?.message || `Download failed (${res.status})`
+      throw new Error(msg)
+    }
+    return await res.blob()
+  },
   deleteDocument: (token, docId) => request(`/api/documents/${docId}?confirm=true`, { method: 'DELETE', token }),
 
   listThreads: (token) => request('/api/threads', { token }),

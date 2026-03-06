@@ -9,14 +9,14 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"llm-doc-qa-assistant/backend/internal/auth"
+	authapp "llm-doc-qa-assistant/backend/internal/application/auth"
+	domainauth "llm-doc-qa-assistant/backend/internal/domain/auth"
 	"llm-doc-qa-assistant/backend/internal/ingest"
 	"llm-doc-qa-assistant/backend/internal/qa"
 	"llm-doc-qa-assistant/backend/internal/store"
@@ -31,14 +31,31 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
-type Server struct {
-	store    *store.Store
-	fileRoot string
-	logger   *log.Logger
+type AuthUseCase interface {
+	Register(ctx context.Context, email, password string) (domainauth.User, error)
+	Login(ctx context.Context, email, password string) (domainauth.User, domainauth.Session, error)
+	Logout(ctx context.Context, token, actorID string) error
+	Authenticate(ctx context.Context, token string) (domainauth.User, error)
 }
 
-func NewServer(s *store.Store, fileRoot string, logger *log.Logger) *Server {
-	return &Server{store: s, fileRoot: fileRoot, logger: logger}
+type DocumentObjectStore interface {
+	PutObject(ctx context.Context, key string, data []byte, contentType string) error
+	GetObject(ctx context.Context, key string) ([]byte, string, error)
+	DeleteObject(ctx context.Context, key string) error
+}
+
+type Server struct {
+	store       *store.Store
+	authService AuthUseCase
+	objectStore DocumentObjectStore
+	logger      *log.Logger
+}
+
+func NewServer(s *store.Store, authService AuthUseCase, objectStore DocumentObjectStore, logger *log.Logger) *Server {
+	if objectStore == nil {
+		panic("objectStore cannot be nil")
+	}
+	return &Server{store: s, authService: authService, objectStore: objectStore, logger: logger}
 }
 
 func (s *Server) Routes() http.Handler {
@@ -54,7 +71,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.HandleFunc("/api/documents/upload", s.withAuth(s.withMethod(http.MethodPost, s.handleUploadDocument)))
 	mux.HandleFunc("/api/documents", s.withAuth(s.handleDocumentsRoot))
-	mux.HandleFunc("/api/documents/", s.withAuth(s.handleDocumentByID))
+	mux.HandleFunc("/api/documents/", s.withAuth(s.handleDocumentRoutes))
 
 	mux.HandleFunc("/api/threads", s.withAuth(s.handleThreadsRoot))
 	mux.HandleFunc("/api/threads/", s.withAuth(s.handleThreadsSubRoutes))
@@ -112,17 +129,14 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		session, ok := s.store.GetSession(token)
-		if !ok || session.ExpiresAt.Before(time.Now().UTC()) {
-			s.store.RecordAudit("auth.unauthorized", "", r.URL.Path, map[string]interface{}{"reason": "expired_or_unknown_token"})
-			writeError(w, http.StatusUnauthorized, "unauthorized", "session expired or invalid")
-			return
-		}
-
-		user, ok := s.store.GetUserByID(session.UserID)
-		if !ok {
-			s.store.RecordAudit("auth.unauthorized", session.UserID, r.URL.Path, map[string]interface{}{"reason": "user_not_found"})
-			writeError(w, http.StatusUnauthorized, "unauthorized", "user not found")
+		user, err := s.authService.Authenticate(r.Context(), token)
+		if err != nil {
+			if errors.Is(err, authapp.ErrUnauthorized) {
+				s.store.RecordAudit("auth.unauthorized", "", r.URL.Path, map[string]interface{}{"reason": "expired_or_unknown_token"})
+				writeError(w, http.StatusUnauthorized, "unauthorized", "session expired or invalid")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "auth_error", "authentication failed")
 			return
 		}
 
@@ -131,8 +145,8 @@ func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func getUserFromContext(ctx context.Context) (types.User, bool) {
-	user, ok := ctx.Value(userContextKey).(types.User)
+func getUserFromContext(ctx context.Context) (domainauth.User, bool) {
+	user, ok := ctx.Value(userContextKey).(domainauth.User)
 	return user, ok
 }
 
@@ -147,26 +161,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	if req.Email == "" {
-		writeError(w, http.StatusBadRequest, "invalid_email", "email is required")
-		return
-	}
-
-	hash, err := auth.HashPassword(req.Password)
+	user, err := s.authService.Register(r.Context(), req.Email, req.Password)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_password", err.Error())
-		return
-	}
-
-	user := types.User{
-		ID:           types.NewID("usr"),
-		Email:        req.Email,
-		PasswordHash: hash,
-		CreatedAt:    time.Now().UTC(),
-	}
-	if err := s.store.CreateUser(user); err != nil {
-		writeError(w, http.StatusConflict, "email_exists", "email already registered")
+		s.writeAuthServiceError(w, err)
 		return
 	}
 
@@ -186,33 +183,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
 		return
 	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	user, ok := s.store.GetUserByEmail(req.Email)
-	if !ok || !auth.VerifyPassword(req.Password, user.PasswordHash) {
-		s.store.RecordAudit("auth.login_failed", "", req.Email, nil)
-		writeError(w, http.StatusUnauthorized, "invalid_credentials", "email or password is incorrect")
-		return
-	}
-
-	token, err := auth.NewSessionToken()
+	user, session, err := s.authService.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "token_error", "unable to create session")
+		s.writeAuthServiceError(w, err)
 		return
 	}
-	session := types.Session{
-		Token:     token,
-		UserID:    user.ID,
-		CreatedAt: time.Now().UTC(),
-		ExpiresAt: time.Now().UTC().Add(24 * time.Hour),
-	}
-	if err := s.store.CreateSession(session); err != nil {
-		writeError(w, http.StatusInternalServerError, "session_error", "unable to persist session")
-		return
-	}
-	s.store.RecordAudit("auth.login_success", user.ID, user.ID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"token":      token,
+		"token":      session.Token,
 		"expires_at": session.ExpiresAt,
 		"user":       sanitizeUser(user),
 	})
@@ -221,15 +199,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	user, _ := getUserFromContext(r.Context())
 	token := extractBearerToken(r.Header.Get("Authorization"))
-	if token == "" {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "missing token")
-		return
-	}
-	if err := s.store.DeleteSession(token); err != nil {
+	if err := s.authService.Logout(r.Context(), token, user.ID); err != nil {
+		if errors.Is(err, authapp.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid token")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "session_error", "failed to logout")
 		return
 	}
-	s.store.RecordAudit("auth.logout", user.ID, user.ID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
@@ -285,8 +262,25 @@ func (s *Server) handleListDocuments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleDocumentByID(w http.ResponseWriter, r *http.Request) {
-	docID := strings.TrimPrefix(r.URL.Path, "/api/documents/")
+func (s *Server) handleDocumentRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/documents/"), "/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "invalid_document", "document id is required")
+		return
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) == 1 {
+		s.handleDocumentByID(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "download" && r.Method == http.MethodGet {
+		s.handleDownloadDocument(w, r, parts[0])
+		return
+	}
+	writeError(w, http.StatusNotFound, "not_found", "route not found")
+}
+
+func (s *Server) handleDocumentByID(w http.ResponseWriter, r *http.Request, docID string) {
 	if docID == "" {
 		writeError(w, http.StatusBadRequest, "invalid_document", "document id is required")
 		return
@@ -312,7 +306,10 @@ func (s *Server) handleDocumentByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "confirmation_required", "delete requires ?confirm=true")
 			return
 		}
-		_ = os.Remove(doc.StoragePath)
+		if err := s.objectStore.DeleteObject(r.Context(), doc.StoragePath); err != nil {
+			writeError(w, http.StatusInternalServerError, "delete_failed", "failed to delete document file")
+			return
+		}
 		if err := s.store.DeleteDocument(docID); err != nil {
 			writeError(w, http.StatusInternalServerError, "delete_failed", "failed to delete document")
 			return
@@ -324,6 +321,38 @@ func (s *Server) handleDocumentByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	}
+}
+
+func (s *Server) handleDownloadDocument(w http.ResponseWriter, r *http.Request, docID string) {
+	user, _ := getUserFromContext(r.Context())
+	doc, ok := s.store.GetDocument(docID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "document not found")
+		return
+	}
+	if doc.OwnerUserID != user.ID {
+		s.store.RecordAudit("auth.unauthorized", user.ID, docID, map[string]interface{}{"resource": "document", "operation": "download"})
+		writeError(w, http.StatusForbidden, "forbidden", "document does not belong to current user")
+		return
+	}
+
+	data, contentType, err := s.objectStore.GetObject(r.Context(), doc.StoragePath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "download_failed", "failed to download document")
+		return
+	}
+	if contentType == "" {
+		contentType = doc.MimeType
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", sanitizeFileName(doc.Name)))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
@@ -360,12 +389,8 @@ func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
 	if ext == "" {
 		ext = ".txt"
 	}
-	storagePath := filepath.Join(s.fileRoot, user.ID, docID+ext)
-	if err := os.MkdirAll(filepath.Dir(storagePath), 0o755); err != nil {
-		writeError(w, http.StatusInternalServerError, "storage_error", "failed to create storage path")
-		return
-	}
-	if err := os.WriteFile(storagePath, data, 0o644); err != nil {
+	objectKey := user.ID + "/" + docID + ext
+	if err := s.objectStore.PutObject(r.Context(), objectKey, data, inferContentType(header.Filename, header.Header.Get("Content-Type"))); err != nil {
 		writeError(w, http.StatusInternalServerError, "storage_error", "failed to save file")
 		return
 	}
@@ -377,7 +402,7 @@ func (s *Server) handleUploadDocument(w http.ResponseWriter, r *http.Request) {
 		Name:          header.Filename,
 		SizeBytes:     int64(len(data)),
 		MimeType:      header.Header.Get("Content-Type"),
-		StoragePath:   storagePath,
+		StoragePath:   objectKey,
 		Status:        "indexing",
 		ChunkCount:    0,
 		CreatedAt:     now,
@@ -649,11 +674,28 @@ func (s *Server) handleConfigHealth(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func sanitizeUser(user types.User) map[string]interface{} {
+func sanitizeUser(user domainauth.User) map[string]interface{} {
 	return map[string]interface{}{
 		"id":         user.ID,
 		"email":      user.Email,
 		"created_at": user.CreatedAt,
+	}
+}
+
+func (s *Server) writeAuthServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, authapp.ErrInvalidEmail):
+		writeError(w, http.StatusBadRequest, "invalid_email", "email is required")
+	case errors.Is(err, authapp.ErrInvalidPassword):
+		writeError(w, http.StatusBadRequest, "invalid_password", "password must satisfy minimum policy")
+	case errors.Is(err, authapp.ErrEmailAlreadyExists):
+		writeError(w, http.StatusConflict, "email_exists", "email already registered")
+	case errors.Is(err, authapp.ErrInvalidCredentials):
+		writeError(w, http.StatusUnauthorized, "invalid_credentials", "email or password is incorrect")
+	case errors.Is(err, authapp.ErrUnauthorized):
+		writeError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 	}
 }
 
@@ -795,4 +837,31 @@ func truncate(s string, n int) string {
 		return string(r)
 	}
 	return string(r[:n]) + "..."
+}
+
+func inferContentType(fileName, fallback string) string {
+	if strings.TrimSpace(fallback) != "" {
+		return fallback
+	}
+	switch strings.ToLower(filepath.Ext(fileName)) {
+	case ".txt":
+		return "text/plain; charset=utf-8"
+	case ".md", ".markdown":
+		return "text/markdown; charset=utf-8"
+	case ".pdf":
+		return "application/pdf"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+func sanitizeFileName(name string) string {
+	name = strings.ReplaceAll(name, "\\", "_")
+	name = strings.ReplaceAll(name, "/", "_")
+	name = strings.ReplaceAll(name, "\"", "_")
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "document.bin"
+	}
+	return name
 }

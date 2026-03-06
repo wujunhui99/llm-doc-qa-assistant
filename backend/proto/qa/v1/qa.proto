@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+package qa.v1;
+
+option go_package = "llm-doc-qa-assistant/backend/proto/gen/go/qav1;qav1";
+
+message Empty {}
+
+message HealthReply {
+  string status = 1;
+  string time = 2;
+}
+
+message User {
+  string id = 1;
+  string email = 2;
+  string created_at = 3;
+}
+
+message AuthReply {
+  User user = 1;
+  string token = 2;
+  string expires_at = 3;
+}
+
+message RegisterRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LogoutRequest {
+  string token = 1;
+}
+
+message MeRequest {
+  string token = 1;
+}
+
+message Document {
+  string id = 1;
+  string owner_user_id = 2;
+  string name = 3;
+  int64 size_bytes = 4;
+  string mime_type = 5;
+  string storage_path = 6;
+  string status = 7;
+  int32 chunk_count = 8;
+  string created_at = 9;
+  string last_updated_at = 10;
+}
+
+message UploadDocumentRequest {
+  string token = 1;
+  string filename = 2;
+  string mime_type = 3;
+  bytes content = 4;
+}
+
+message DocumentRequest {
+  string token = 1;
+  string document_id = 2;
+}
+
+message DeleteDocumentRequest {
+  string token = 1;
+  string document_id = 2;
+  bool confirm = 3;
+}
+
+message ListDocumentsRequest {
+  string token = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListDocumentsReply {
+  repeated Document documents = 1;
+  int32 total = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message DocumentReply {
+  Document document = 1;
+}
+
+message DownloadDocumentReply {
+  bytes content = 1;
+  string content_type = 2;
+  string filename = 3;
+}
+
+message Thread {
+  string id = 1;
+  string owner_user_id = 2;
+  string title = 3;
+  string created_at = 4;
+}
+
+message ListThreadsRequest {
+  string token = 1;
+}
+
+message ListThreadsReply {
+  repeated Thread threads = 1;
+}
+
+message CreateThreadRequest {
+  string token = 1;
+  string title = 2;
+}
+
+message ThreadReply {
+  Thread thread = 1;
+}
+
+message Citation {
+  string doc_id = 1;
+  string doc_name = 2;
+  string chunk_id = 3;
+  string excerpt = 4;
+  int32 score = 5;
+  int32 chunk_index = 6;
+}
+
+message Turn {
+  string id = 1;
+  string thread_id = 2;
+  string owner_user_id = 3;
+  string question = 4;
+  string answer = 5;
+  string status = 6;
+  string scope_type = 7;
+  repeated string scope_doc_ids = 8;
+  string created_at = 9;
+  string updated_at = 10;
+}
+
+message TurnItem {
+  string id = 1;
+  string turn_id = 2;
+  string item_type = 3;
+  string payload_json = 4;
+  string created_at = 5;
+}
+
+message CreateTurnRequest {
+  string token = 1;
+  string thread_id = 2;
+  string message = 3;
+  string scope_type = 4;
+  repeated string scope_doc_ids = 5;
+}
+
+message CreateTurnReply {
+  Turn turn = 1;
+  repeated Citation citations = 2;
+  repeated TurnItem items = 3;
+}
+
+message GetTurnRequest {
+  string token = 1;
+  string thread_id = 2;
+  string turn_id = 3;
+}
+
+message GetTurnReply {
+  Turn turn = 1;
+  repeated TurnItem items = 2;
+}
+
+message ConfigReply {
+  string active_provider = 1;
+  repeated string available = 2;
+}
+
+message SetConfigRequest {
+  string token = 1;
+  string active_provider = 2;
+}
+
+message LlmContextChunk {
+  string doc_id = 1;
+  string doc_name = 2;
+  string chunk_id = 3;
+  int32 chunk_index = 4;
+  int32 score = 5;
+  string content = 6;
+}
+
+message GenerateAnswerRequest {
+  string owner_user_id = 1;
+  string thread_id = 2;
+  string turn_id = 3;
+  string question = 4;
+  string scope_type = 5;
+  repeated string scope_doc_ids = 6;
+  repeated LlmContextChunk contexts = 7;
+  string previous_turn_question = 8;
+  string previous_turn_answer = 9;
+}
+
+message GenerateAnswerReply {
+  string answer = 1;
+}
+
+service CoreService {
+  rpc Health(Empty) returns (HealthReply);
+  rpc Register(RegisterRequest) returns (AuthReply);
+  rpc Login(LoginRequest) returns (AuthReply);
+  rpc Logout(LogoutRequest) returns (Empty);
+  rpc Me(MeRequest) returns (AuthReply);
+
+  rpc UploadDocument(UploadDocumentRequest) returns (DocumentReply);
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsReply);
+  rpc GetDocument(DocumentRequest) returns (DocumentReply);
+  rpc DownloadDocument(DocumentRequest) returns (DownloadDocumentReply);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (Empty);
+
+  rpc ListThreads(ListThreadsRequest) returns (ListThreadsReply);
+  rpc CreateThread(CreateThreadRequest) returns (ThreadReply);
+  rpc CreateTurn(CreateTurnRequest) returns (CreateTurnReply);
+  rpc GetTurn(GetTurnRequest) returns (GetTurnReply);
+
+  rpc GetConfig(MeRequest) returns (ConfigReply);
+  rpc SetConfig(SetConfigRequest) returns (ConfigReply);
+}
+
+service LlmService {
+  rpc Health(Empty) returns (HealthReply);
+  rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerReply);
+}

@@ -69,8 +69,6 @@ func (s *Store) load() error {
 
 func defaultState() types.State {
 	return types.State{
-		Users:     map[string]types.User{},
-		Sessions:  map[string]types.Session{},
 		Documents: map[string]types.Document{},
 		Chunks:    map[string][]types.Chunk{},
 		Threads:   map[string]types.Thread{},
@@ -80,18 +78,11 @@ func defaultState() types.State {
 			ActiveProvider: "mock",
 			Available:      []string{"mock", "openai", "claude", "local"},
 		},
-		EmailToUser: map[string]string{},
 		Initialized: true,
 	}
 }
 
 func ensureMaps(state *types.State) {
-	if state.Users == nil {
-		state.Users = map[string]types.User{}
-	}
-	if state.Sessions == nil {
-		state.Sessions = map[string]types.Session{}
-	}
 	if state.Documents == nil {
 		state.Documents = map[string]types.Document{}
 	}
@@ -106,9 +97,6 @@ func ensureMaps(state *types.State) {
 	}
 	if state.TurnItems == nil {
 		state.TurnItems = map[string][]types.TurnItem{}
-	}
-	if state.EmailToUser == nil {
-		state.EmailToUser = map[string]string{}
 	}
 	if len(state.Provider.Available) == 0 {
 		state.Provider.Available = []string{"mock", "openai", "claude", "local"}
@@ -157,61 +145,6 @@ func (s *Store) RecordAudit(eventType, actorID, targetID string, metadata map[st
 		TargetID:  targetID,
 		Metadata:  metadata,
 	})
-}
-
-func (s *Store) CreateUser(user types.User) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok := s.state.EmailToUser[user.Email]; ok {
-		return errors.New("email already exists")
-	}
-	s.state.Users[user.ID] = user
-	s.state.EmailToUser[user.Email] = user.ID
-	if err := s.saveLocked(); err != nil {
-		return err
-	}
-	s.appendAuditLocked(types.AuditEvent{EventType: "auth.register", ActorID: user.ID, TargetID: user.ID})
-	return nil
-}
-
-func (s *Store) GetUserByEmail(email string) (types.User, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	userID, ok := s.state.EmailToUser[email]
-	if !ok {
-		return types.User{}, false
-	}
-	user, ok := s.state.Users[userID]
-	return user, ok
-}
-
-func (s *Store) GetUserByID(userID string) (types.User, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	user, ok := s.state.Users[userID]
-	return user, ok
-}
-
-func (s *Store) CreateSession(session types.Session) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.state.Sessions[session.Token] = session
-	return s.saveLocked()
-}
-
-func (s *Store) DeleteSession(token string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.state.Sessions, token)
-	return s.saveLocked()
-}
-
-func (s *Store) GetSession(token string) (types.Session, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	session, ok := s.state.Sessions[token]
-	return session, ok
 }
 
 func (s *Store) UpsertDocument(doc types.Document, chunks []types.Chunk) error {

@@ -88,15 +88,12 @@ type AuditEvent struct {
 }
 
 type State struct {
-	Users        map[string]User       `json:"users"`
-	Sessions     map[string]Session    `json:"sessions"`
 	Documents    map[string]Document   `json:"documents"`
 	Chunks       map[string][]Chunk    `json:"chunks"`
 	Threads      map[string]Thread     `json:"threads"`
 	Turns        map[string]Turn       `json:"turns"`
 	TurnItems    map[string][]TurnItem `json:"turn_items"`
 	Provider     ProviderConfig        `json:"provider"`
-	EmailToUser  map[string]string     `json:"email_to_user"`
 	Initialized  bool                  `json:"initialized"`
 	LastSavedUTC time.Time             `json:"last_saved_utc"`
 }

@@ -163,6 +163,10 @@ button:disabled {
   cursor: not-allowed;
 }
 
+td button + button {
+  margin-left: 0.45rem;
+}
+
 .ghost-btn {
   background: transparent;
   color: var(--accent-strong);

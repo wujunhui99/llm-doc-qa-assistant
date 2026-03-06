@@ -5,6 +5,7 @@
 - Document Management page:
   - upload TXT/Markdown/PDF,
   - list owned documents,
+  - download owned documents,
   - delete with confirmation.
 - Agent QA page:
   - thread creation/switching,
@@ -32,6 +33,7 @@
   - unauthenticated users only see auth page,
   - authenticated users get tabbed app shell.
 - Document status and citation visibility shown by default.
+- Users can click `Download` for owned documents; request uses bearer token and browser blob download.
 - Scope UX:
   - `all`: global owned-doc retrieval,
   - `doc`: explicit checkbox selection for owned docs.

@@ -1,10 +1,15 @@
 # Backend
 backend/data/
 backend/.cache/
+backend/services/**/data/
 
 # Frontend
 frontend/node_modules/
 frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
 
 # OS
 .DS_Store

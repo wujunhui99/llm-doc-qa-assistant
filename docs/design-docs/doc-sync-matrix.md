@@ -5,6 +5,8 @@ Use this matrix to decide mandatory documentation updates for each change set.
 | Changed Area (examples) | Must Update | Minimum Required Update |
 |---|---|---|
 | Backend API contracts (`/api`, `/cmd`, `/internal/api`, handlers, DTOs) | `ARCHITECTURE.md`, `docs/product-specs/*` | Update request/response behavior and endpoint impact. |
+| Internal RPC contracts (`/backend/proto/*`, gRPC methods/messages, service stubs) | `ARCHITECTURE.md`, `docs/design-docs/go-python-microservices.md`, `docs/product-specs/*` | Update inter-service request/response fields, ownership/scope fields, and compatibility notes. |
+| Microservice topology/startup changes (`/backend/services/*`, service ports, service split/merge) | `ARCHITECTURE.md`, `README.md`, `docs/RELIABILITY.md`, `docs/SECURITY.md` | Update service responsibilities, startup/runbook, dependency graph, and failure boundaries. |
 | Harness orchestration (`/internal/harness`, turn state machine, tool routing) | `ARCHITECTURE.md`, `docs/RELIABILITY.md`, `docs/QUALITY_SCORE.md` | Update turn lifecycle, failure handling, and quality gate impact. |
 | Retrieval/ingestion (`parser`, `chunker`, `index`, `rerank`) | `ARCHITECTURE.md`, `docs/product-specs/*`, `docs/QUALITY_SCORE.md` | Update ingestion/retrieval flow and related accuracy metrics. |
 | Frontend interaction changes (`/frontend/src`, pages/components) | `docs/FRONTEND.md`, `docs/DESIGN.md`, `docs/product-specs/*` | Update user flow, UI states, and acceptance behavior. |

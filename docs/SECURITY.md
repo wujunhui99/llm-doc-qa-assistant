@@ -1,34 +1,35 @@
 # SECURITY.md
 
-## Baseline Requirements (Implemented)
-- Passwords are never stored plaintext.
-  - Current implementation: PBKDF2-HMAC-SHA256 + random salt + high iteration count.
-- Session-based authentication with bearer token.
-- Protected API routes enforce authenticated user context.
-- Upload validation:
-  - allowlisted file extensions (`.txt`, `.md`, `.markdown`, `.pdf`),
-  - max size 10MB.
-- Ownership checks for document and thread resources.
-- Retrieval isolation guard:
-  - scope resolution only targets current user's documents.
-- Confirmation gate for destructive delete action (`?confirm=true`).
+## Baseline Requirements
+- Passwords are never stored plaintext (PBKDF2 hash).
+- Auth persistence uses MySQL (`users`, `user_sessions`).
+- Document binaries persist in MinIO bucket.
+- Upload allowlist: `.txt`, `.md`, `.markdown`, `.pdf`.
+- Ownership checks for document get/download/delete and thread/turn operations.
+- Scope guardrails enforce current-user-only retrieval context.
 
-## Audit Events (Implemented)
+## Microservice Security Controls (Implemented)
+- Public exposure boundary:
+  - Only `api-go` is frontend-facing.
+  - `core-go-rpc` and `llm-python-rpc` are internal services.
+- Policy enforcement point:
+  - `core-go-rpc` authenticates session token and enforces ownership/scope.
+- Internal service auth:
+  - `core-go-rpc` can send `x-service-token` metadata to Python.
+  - `llm-python-rpc` validates token when `INTERNAL_SERVICE_TOKEN` is configured.
+- Python receives trusted identity context fields only from core service:
+  - `owner_user_id`, `scope_type`, `scope_doc_ids`, `thread_id`, `turn_id`.
+
+## Audit Events
 - Login success/failure.
 - Logout.
 - Unauthorized access attempts.
 - Document deletion.
-- Provider config changes.
+- Provider/config changes.
+- Internal service auth failures.
 
-Audit sink: `backend/data/audit.log` (JSONL).
-
-## Data Handling
-- Raw documents stored in local filesystem path under backend data directory.
-- Metadata/chunks/sessions stored in JSON state file.
-- No secret values are written to logs by the API layer.
-
-## Remaining security work
-- Replace file-backed state with encrypted-at-rest production database.
-- Add rate limiting and lockout policy for auth endpoints.
-- Add CSRF and stricter CORS origin policy for production deployment.
-- Add secret scanning + SAST in CI once workflows are created.
+## Remaining Security Work
+- Enforce mTLS or signed service tokens for Go->Python traffic in production.
+- Add request signing and replay protection for internal calls.
+- Encrypt sensitive backups at rest.
+- Add SAST/secret scanning and dependency checks in CI.
