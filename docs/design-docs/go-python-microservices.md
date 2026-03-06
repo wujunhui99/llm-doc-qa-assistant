@@ -1,11 +1,10 @@
-# Go + Python Microservices Design
+# Go Runtime Architecture (Merged LLM)
 
-## Why this split
-- Go handles stable external API and strict policy/tenant enforcement.
-- Python handles fast-changing LLM/RAG answer generation logic.
-- gRPC contracts isolate internal evolution from frontend API compatibility.
+## Background
+This document originally described the Go + Python split.
+As of 2026-03-06, answer generation has been merged into `core-go-rpc`.
 
-## Service boundaries (implemented)
+## Service boundaries (current)
 - `api-go` (Go):
   - HTTP `/api/*` transport and response shaping.
   - Multipart upload/SSE handling.
@@ -14,27 +13,24 @@
   - Auth/session + ownership rules.
   - Document parse/chunk/index state updates.
   - Thread/turn orchestration and citations.
-  - Calls Python `LlmService.GenerateAnswer`.
-- `llm-python-rpc` (Python):
-  - Health check and answer generation from scoped contexts.
+  - Built-in LLM agent generation (SiliconFlow chat) and fallback logic.
+  - Vector retrieval with Qdrant + lexical fallback.
 
 ## Contract rules
 - Source of truth proto: `backend/proto/qa/v1/qa.proto`.
-- `api-go` only talks to `CoreService`; frontend never directly accesses core/llm RPC ports.
-- `core-go-rpc` is authoritative for scope and tenant boundaries.
-- `llm-python-rpc` consumes only scope-filtered chunks and returns answer text.
+- `api-go` only talks to `CoreService`; frontend never directly accesses core RPC port.
+- `core-go-rpc` is authoritative for scope, tenant boundaries, and answer generation.
 
 ## Runtime defaults
 - `api-go`: `:8080`
 - `core-go-rpc`: `:19090`
-- `llm-python-rpc`: `:19091`
 
 ## Security notes
-- Optional `INTERNAL_SERVICE_TOKEN` is forwarded as gRPC metadata `x-service-token`.
-- When token is configured, Python rejects unmatched internal callers.
+- `core-go-rpc` enforces owner isolation on retrieval scope and Qdrant owner filter.
+- `core-go-rpc` does not expose internal LLM calls over public endpoints.
 
 ## Rollout strategy
 1. Keep external `/api/*` behavior stable.
 2. Route all domain logic through `core-go-rpc`.
-3. Keep Python answer service replaceable behind `LlmService` contract.
+3. Keep model-provider adapter replaceable behind Go `llm.Generator` interface.
 4. Migrate JSON state to relational schema without breaking frontend contract.

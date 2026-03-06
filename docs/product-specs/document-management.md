@@ -3,7 +3,7 @@
 ## Scope
 - Upload document formats: TXT, Markdown, PDF.
 - Document list, detail metadata, download, and delete operations.
-- Persistent storage for raw file + parsed chunks.
+- Persistent storage for raw file + parsed chunks + chunk vectors.
 
 ## Ownership Rules
 - Every document has `owner_user_id`.
@@ -15,6 +15,7 @@
 - Validate file type and size (10MB max).
 - Parse and chunk content.
 - Persist metadata and chunk index.
+- Vectorize chunks and write vector index into Qdrant (when vector search enabled).
 - Store raw file in MinIO bucket.
 - Status lifecycle: `indexing -> ready` (or `failed` on parse error).
 
@@ -28,13 +29,13 @@
 
 4. Delete:
 - Requires explicit confirmation query `confirm=true`.
-- Removes metadata, chunks, and object storage file.
+- Removes metadata, chunks, object storage file, and vector index entries.
 - Writes audit event with actor and target doc id.
 
 ## Service Flow
 - Frontend calls `api-go` `/api/documents/*`.
 - `api-go` forwards request to `core-go-rpc`.
-- `core-go-rpc` performs authz/ownership checks and interacts with MinIO + state store.
+- `core-go-rpc` performs authz/ownership checks and interacts with MinIO + state store + Qdrant.
 
 ## API Contract
 - `POST /api/documents/upload`

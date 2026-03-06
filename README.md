@@ -2,19 +2,18 @@
 
 MVP implementation based on `AGENTS.md` + architecture/spec docs.
 
-## Stack Direction (Go + Python Microservices)
+## Stack Direction (Go Services)
 - Frontend: React (Vite)
 - `api-go`: frontend HTTP gateway (`/api/*`)
-- `core-go-rpc`: Go domain/rule service (auth, docs, scope, turn orchestration)
-- `llm-python-rpc`: Python LLM answer service
+- `core-go-rpc`: Go domain/rule service (auth, docs, scope, retrieval, agent answer orchestration)
 - Middleware:
   - MySQL (auth/session persistence)
   - MinIO (document binary storage)
+  - Qdrant (vector index for RAG retrieval)
 
 ## Directory Layout (backend)
-- `backend/services/api-go`: HTTP API gateway
-- `backend/services/core-go-rpc`: Go core RPC service
-- `backend/services/llm-python-rpc`: Python LLM RPC service
+- `backend/apps/api-go`: HTTP API gateway
+- `backend/apps/core-go-rpc`: Go core RPC + built-in LLM agent service
 - `backend/proto/qa/v1/qa.proto`: gRPC contract source
 - `backend/proto/gen/go/qa/v1`: Go generated stubs
 
@@ -27,28 +26,30 @@ This starts:
 - MySQL (`127.0.0.1:3306`)
 - MinIO API (`127.0.0.1:9000`)
 - MinIO Console (`127.0.0.1:9001`)
+- Qdrant HTTP API (`127.0.0.1:6333`)
+- Qdrant gRPC (`127.0.0.1:6334`)
 
-## Run microservices
+## Run services
 
-Terminal A (Python LLM RPC):
-```bash
-cd backend/services/llm-python-rpc
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-LLM_RPC_ADDR=:19091 python -m app.server
-```
-
-Terminal B (Go core RPC):
+Terminal A (Go core RPC):
 ```bash
 cd backend
-LLM_RPC_ADDR=127.0.0.1:19091 go run ./services/core-go-rpc/cmd/server
+go run ./apps/core-go-rpc/cmd/server
 ```
 
-Terminal C (Go API gateway):
+Enable vector retrieval + SiliconFlow chat:
 ```bash
 cd backend
-CORE_RPC_ADDR=127.0.0.1:19090 PORT=8080 go run ./services/api-go/cmd/api
+VECTOR_SEARCH_ENABLED=true \
+QDRANT_ENDPOINT=http://127.0.0.1:6333 \
+SILICONFLOW_API_KEY=your_key \
+go run ./apps/core-go-rpc/cmd/server
+```
+
+Terminal B (Go API gateway):
+```bash
+cd backend
+CORE_RPC_ADDR=127.0.0.1:19090 PORT=8080 go run ./apps/api-go/cmd/api
 ```
 
 Or run by one command (from repo root):
@@ -60,14 +61,12 @@ make restart all
 
 Single service control:
 ```bash
-make start llm
 make restart core
 make stop api
 make restart frontend
 ```
 
 Service aliases:
-- `llm` / `llm-python-rpc` / `python` (`:19091`)
 - `core` / `core-go-rpc` / `go-rpc` (`:19090`)
 - `api` / `api-go` (`:8080`)
 - `frontend` / `fe` / `web` (`:5173`)
@@ -80,7 +79,13 @@ export MINIO_ACCESS_KEY='minioadmin'
 export MINIO_SECRET_KEY='minioadmin123'
 export MINIO_BUCKET='qa-documents'
 export MINIO_USE_SSL='false'
-export INTERNAL_SERVICE_TOKEN='change-me-in-prod'
+export VECTOR_SEARCH_ENABLED='true'
+export QDRANT_ENDPOINT='http://127.0.0.1:6333'
+export QDRANT_COLLECTION='qa_chunks'
+export SILICONFLOW_API_BASE='https://api.siliconflow.cn/v1'
+export SILICONFLOW_API_KEY='replace-me'
+export SILICONFLOW_CHAT_MODEL='Pro/MiniMaxAI/MiniMax-M2.5'
+export SILICONFLOW_EMBEDDING_MODEL='Qwen/Qwen3-Embedding-4B'
 ```
 
 ## Frontend run

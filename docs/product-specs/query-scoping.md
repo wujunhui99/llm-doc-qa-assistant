@@ -25,6 +25,8 @@ Support user-controlled retrieval scope in QA input:
 - Scope is resolved before retrieval starts.
 - Resolved scope is stored on turn metadata (`scope_type`, `scope_doc_ids`).
 - Retrieval is executed only against selected owned docs.
+- Retrieval prefers vector search (Qdrant) when enabled; lexical retrieval is fallback.
+- Vector hits are filtered by owner and selected docs before answer generation.
 
 ## Acceptance Criteria
 - `@doc` responses only cite selected documents.

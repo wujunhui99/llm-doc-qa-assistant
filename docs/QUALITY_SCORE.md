@@ -4,9 +4,10 @@
 - Grounded Answer Rate (with valid citations)
 - Multi-turn Continuity Score
 - Retrieval Relevance@K
+- Vector Retrieval Recall@K (when vector search enabled)
 - Scope Resolution Accuracy (`@doc` / `@all`)
 - Tenant Isolation Leak Rate
-- Unit Test Pass Rate (backend/services + core domain)
+- Unit Test Pass Rate (backend/apps + core domain)
 - Worktree Boot Success Rate (agent self-test runs)
 - CDP UI Test Pass Rate
 - UI Bug Reproduction-and-Validation Success Rate
@@ -30,4 +31,4 @@
 - A change is not complete unless unit tests are added/updated and pass locally.
 - Minimum local verification before commit:
   - `cd backend && go test ./...`
-  - If Python service logic changed: run service-level unit tests for `backend/services/llm-python-rpc`.
+  - If LLM adapter logic changed: run service-level unit tests for `backend/apps/core-go-rpc/internal/llm`.

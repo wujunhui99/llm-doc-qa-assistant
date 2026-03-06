@@ -35,6 +35,17 @@ services:
     volumes:
       - minio_data:/data
 
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: llm_doc_qa_qdrant
+    restart: unless-stopped
+    ports:
+      - '6333:6333'
+      - '6334:6334'
+    volumes:
+      - qdrant_data:/qdrant/storage
+
 volumes:
   mysql_data:
   minio_data:
+  qdrant_data:

@@ -8,7 +8,7 @@ Build a Smart Document QA Assistant that supports:
 - per-user document isolation,
 - query scope controls (`@doc` and `@all`),
 - provider switching,
-with a Go + Python microservice architecture.
+with a Go microservice architecture.
 
 ## 2. Microservice Topology
 
@@ -21,29 +21,20 @@ Responsibilities:
 
 Default runtime:
 - Port: `:8080`
-- Entry: `backend/services/api-go/cmd/api`
+- Entry: `backend/apps/api-go/cmd/api`
 
 ### Service 2: `core-go-rpc` (Go domain/rule service)
 Responsibilities:
 - Auth and session lifecycle (DDD auth module + MySQL repositories).
 - Document metadata/chunk persistence and ownership checks.
 - Document binary storage operations via MinIO.
+- Chunk vectorization + vector index write/read (Qdrant).
 - Thread/turn lifecycle, scope resolution, retrieval chunk selection.
-- Calls Python LLM service for answer generation.
+- Built-in LLM agent orchestration (SiliconFlow chat + fallback).
 
 Default runtime:
 - Port: `:19090`
-- Entry: `backend/services/core-go-rpc/cmd/server`
-
-### Service 3: `llm-python-rpc` (Python LLM service)
-Responsibilities:
-- Implements `LlmService` gRPC contract.
-- Receives scope-constrained retrieval contexts from `core-go-rpc`.
-- Generates grounded answer text from contexts + conversation history.
-
-Default runtime:
-- Port: `:19091`
-- Entry: `backend/services/llm-python-rpc/app/server.py`
+- Entry: `backend/apps/core-go-rpc/cmd/server`
 
 ## 3. Inter-Service Contract
 
@@ -52,18 +43,9 @@ Proto source:
 
 Generated stubs:
 - Go: `backend/proto/gen/go/qa/v1`
-- Python: `backend/services/llm-python-rpc/app/generated/qa/v1`
 
 Service contracts:
 - `api-go -> core-go-rpc`: `qa.v1.CoreService`
-- `core-go-rpc -> llm-python-rpc`: `qa.v1.LlmService`
-
-Mandatory identity/scope fields carried into Python call:
-- `owner_user_id`
-- `thread_id`
-- `turn_id`
-- `scope_type`
-- `scope_doc_ids`
 
 ## 4. Persistence Architecture
 - MySQL:
@@ -71,16 +53,19 @@ Mandatory identity/scope fields carried into Python call:
   - document/thread/turn relational migration (planned)
 - MinIO:
   - raw document files, object key `{owner_user_id}/{doc_id}.{ext}`
-- JSON local state (current transitional store):
+- Qdrant:
+  - chunk vectors + payload metadata (`owner_user_id`, `doc_id`, `chunk_id`, `chunk_index`, `content`)
+- JSON local state (transitional):
   - documents/chunks/threads/turns/provider config
 
 ## 5. Runtime Turn Model (Cross-Service)
 1. Frontend sends `POST /api/threads/{thread_id}/turns` to `api-go`.
 2. `api-go` forwards request to `core-go-rpc` `CreateTurn`.
 3. `core-go-rpc` authenticates token, validates ownership + scope.
-4. `core-go-rpc` retrieves scoped chunks and calls Python `GenerateAnswer`.
-5. `core-go-rpc` persists turn/items and returns citations + answer.
-6. `api-go` returns turn JSON and can replay turn events via SSE stream endpoint.
+4. `core-go-rpc` embeds question, runs vector retrieval in Qdrant, and falls back to lexical retrieval when vector path fails.
+5. `core-go-rpc` runs built-in agent answer generation (SiliconFlow chat + deterministic fallback).
+6. `core-go-rpc` persists turn/items and returns citations + answer.
+7. `api-go` returns turn JSON and can replay turn events via SSE stream endpoint.
 
 ## 6. External API Contract (Frontend-facing)
 Base: `/api`
@@ -110,15 +95,14 @@ Base: `/api`
 - `core-go-rpc` is policy enforcement point for tenant/ownership checks.
 - Upload allowlist is enforced server-side: `.txt`, `.md`, `.markdown`, `.pdf`.
 - Session token validation performed in `core-go-rpc` for all protected operations.
-- Inter-service auth header `x-service-token` is supported for `core-go-rpc -> llm-python-rpc`.
-- Python service receives already-scoped contexts and must not broaden scope.
+- Vector retrieval enforces owner filter + scope doc filtering before generation.
 
 ## 8. Reliability Controls
-- Timeouts on HTTP->gRPC and Core->LLM gRPC calls.
+- Timeouts on HTTP->gRPC, Core->SiliconFlow calls, and Core->Qdrant calls.
 - Core fallback answer path when LLM call fails.
 - Audit log for auth failures, unauthorized access, and destructive actions.
 - Stable external API maintained while internal services evolve.
 
 ## 9. Migration Status
-- Target runtime is three-service topology under `backend/services/*`.
+- Target runtime is two-service topology under `backend/apps/*`.
 - Next migration step: move document/thread/turn state from JSON store to MySQL schema.

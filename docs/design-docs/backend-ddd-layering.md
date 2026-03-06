@@ -1,7 +1,7 @@
 # Backend DDD Layering
 
 ## Intent
-Refactor backend to keep domain/business rules isolated from transport and infrastructure details, while supporting Go + Python microservices.
+Refactor backend to keep domain/business rules isolated from transport and infrastructure details, while supporting Go service boundaries.
 
 ## Layer responsibilities (Go core service)
 - `domain`:
@@ -23,9 +23,9 @@ Refactor backend to keep domain/business rules isolated from transport and infra
 - Document/QA context currently uses transitional store + infrastructure adapters and is invoked from `core-go-rpc`.
 
 ## Service placement
-- `backend/services/api-go`: thin HTTP gateway (no domain persistence logic).
-- `backend/services/core-go-rpc`: domain rule service and policy enforcement point.
-- `backend/services/llm-python-rpc`: externalized answer-generation adapter service.
+- `backend/apps/api-go`: thin HTTP gateway (no domain persistence logic).
+- `backend/apps/core-go-rpc`: domain rule service and policy enforcement point.
+- `backend/apps/core-go-rpc/internal/llm`: in-process answer-generation adapter layer.
 
 ## Next migration targets
 - Move document/thread/turn aggregates and repositories from file-state store into relational schema.

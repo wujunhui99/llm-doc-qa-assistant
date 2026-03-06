@@ -1,7 +1,7 @@
 # Backend
 backend/data/
 backend/.cache/
-backend/services/**/data/
+backend/apps/**/data/
 
 # Frontend
 frontend/node_modules/
@@ -10,7 +10,7 @@ frontend/dist/
 # Python
 __pycache__/
 *.pyc
-backend/services/llm-python-rpc/.env
+backend/apps/core-go-rpc/.env
 
 # OS
 .DS_Store

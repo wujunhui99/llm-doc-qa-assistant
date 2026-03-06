@@ -1,4 +1,4 @@
-# DB Schema Snapshot (Go + Python Microservices)
+# DB Schema Snapshot (Go Services)
 
 ## Current persistence
 - MySQL: auth/session data (implemented)
@@ -8,7 +8,6 @@
 ## Runtime ownership
 - `api-go`: no direct DB writes.
 - `core-go-rpc`: writes MySQL auth/session and transitional state.
-- `llm-python-rpc`: stateless answer service (no DB yet).
 
 ## Target persistence split
 - Go domain DB (MySQL):
@@ -16,9 +15,8 @@
   - user_sessions
   - documents (target)
   - threads/turns metadata (target)
-- Python retrieval stores (target):
-  - vector index / embedding collections
-  - retrieval job metadata
+- Vector retrieval stores (Qdrant):
+  - chunk vectors + payload collections
 
 ## MySQL tables currently implemented
 ### users

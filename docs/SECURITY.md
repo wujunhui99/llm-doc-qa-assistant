@@ -4,6 +4,7 @@
 - Passwords are never stored plaintext (PBKDF2 hash).
 - Auth persistence uses MySQL (`users`, `user_sessions`).
 - Document binaries persist in MinIO bucket.
+- Vector payloads persist in Qdrant with owner and doc identifiers.
 - Upload allowlist: `.txt`, `.md`, `.markdown`, `.pdf`.
 - Ownership checks for document get/download/delete and thread/turn operations.
 - Scope guardrails enforce current-user-only retrieval context.
@@ -11,14 +12,12 @@
 ## Microservice Security Controls (Implemented)
 - Public exposure boundary:
   - Only `api-go` is frontend-facing.
-  - `core-go-rpc` and `llm-python-rpc` are internal services.
+  - `core-go-rpc` is internal-only.
 - Policy enforcement point:
   - `core-go-rpc` authenticates session token and enforces ownership/scope.
-- Internal service auth:
-  - `core-go-rpc` can send `x-service-token` metadata to Python.
-  - `llm-python-rpc` validates token when `INTERNAL_SERVICE_TOKEN` is configured.
-- Python receives trusted identity context fields only from core service:
-  - `owner_user_id`, `scope_type`, `scope_doc_ids`, `thread_id`, `turn_id`.
+- Vector isolation:
+  - `core-go-rpc` applies owner filter for Qdrant search.
+  - Returned vector hits are filtered by selected scope doc ids before answer generation.
 
 ## Audit Events
 - Login success/failure.
@@ -26,10 +25,8 @@
 - Unauthorized access attempts.
 - Document deletion.
 - Provider/config changes.
-- Internal service auth failures.
 
 ## Remaining Security Work
-- Enforce mTLS or signed service tokens for Go->Python traffic in production.
-- Add request signing and replay protection for internal calls.
+- Add outbound egress allowlist and request signing for model provider calls.
 - Encrypt sensitive backups at rest.
 - Add SAST/secret scanning and dependency checks in CI.
