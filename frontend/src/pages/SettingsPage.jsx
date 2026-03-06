@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
+const providerLabels = {
+  siliconflow: '硅基流动 (siliconflow)',
+  mock: 'Mock',
+  openai: 'OpenAI',
+  claude: 'Claude',
+  local: 'Local'
+}
+
 export function SettingsPage({ token }) {
   const [config, setConfig] = useState(null)
   const [message, setMessage] = useState('')
@@ -46,7 +54,7 @@ export function SettingsPage({ token }) {
               className={config.active_provider === provider ? 'provider-btn active' : 'provider-btn'}
               onClick={() => update(provider)}
             >
-              {provider}
+              {providerLabels[provider] || provider}
             </button>
           ))}
         </div>

@@ -88,6 +88,10 @@ export SILICONFLOW_CHAT_MODEL='Pro/MiniMaxAI/MiniMax-M2.5'
 export SILICONFLOW_EMBEDDING_MODEL='Qwen/Qwen3-Embedding-4B'
 ```
 
+Provider settings defaults:
+- Available: `siliconflow`, `mock`, `openai`, `claude`, `local`
+- Active by default: `siliconflow`
+
 ## Frontend run
 ```bash
 cd frontend

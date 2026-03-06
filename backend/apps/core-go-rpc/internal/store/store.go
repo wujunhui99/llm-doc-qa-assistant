@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,8 @@ type Store struct {
 	auditPath string
 	state     types.State
 }
+
+var defaultProviders = []string{"siliconflow", "mock", "openai", "claude", "local"}
 
 func New(statePath, auditPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
@@ -75,8 +78,8 @@ func defaultState() types.State {
 		Turns:     map[string]types.Turn{},
 		TurnItems: map[string][]types.TurnItem{},
 		Provider: types.ProviderConfig{
-			ActiveProvider: "mock",
-			Available:      []string{"mock", "openai", "claude", "local"},
+			ActiveProvider: "siliconflow",
+			Available:      cloneDefaultProviders(),
 		},
 		Initialized: true,
 	}
@@ -98,12 +101,61 @@ func ensureMaps(state *types.State) {
 	if state.TurnItems == nil {
 		state.TurnItems = map[string][]types.TurnItem{}
 	}
-	if len(state.Provider.Available) == 0 {
-		state.Provider.Available = []string{"mock", "openai", "claude", "local"}
+	state.Provider.Available = normalizeProviders(state.Provider.Available)
+	if strings.TrimSpace(state.Provider.ActiveProvider) == "" || !containsProvider(state.Provider.Available, state.Provider.ActiveProvider) {
+		state.Provider.ActiveProvider = "siliconflow"
 	}
-	if state.Provider.ActiveProvider == "" {
-		state.Provider.ActiveProvider = "mock"
+}
+
+func cloneDefaultProviders() []string {
+	out := make([]string, len(defaultProviders))
+	copy(out, defaultProviders)
+	return out
+}
+
+func normalizeProviders(existing []string) []string {
+	if len(existing) == 0 {
+		return cloneDefaultProviders()
 	}
+
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(defaultProviders)+len(existing))
+	for _, p := range defaultProviders {
+		key := strings.ToLower(strings.TrimSpace(p))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	for _, p := range existing {
+		key := strings.ToLower(strings.TrimSpace(p))
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+func containsProvider(providers []string, active string) bool {
+	active = strings.ToLower(strings.TrimSpace(active))
+	if active == "" {
+		return false
+	}
+	for _, p := range providers {
+		if strings.EqualFold(strings.TrimSpace(p), active) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) saveLocked() error {
@@ -268,25 +320,31 @@ func (s *Store) GetProvider() types.ProviderConfig {
 func (s *Store) SetProvider(active string, actorID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	active = strings.ToLower(strings.TrimSpace(active))
+	if active == "" {
+		return errors.New("unsupported provider")
+	}
 
 	allowed := false
+	matched := ""
 	for _, provider := range s.state.Provider.Available {
-		if provider == active {
+		if strings.EqualFold(strings.TrimSpace(provider), active) {
 			allowed = true
+			matched = strings.ToLower(strings.TrimSpace(provider))
 			break
 		}
 	}
 	if !allowed {
 		return errors.New("unsupported provider")
 	}
-	s.state.Provider.ActiveProvider = active
+	s.state.Provider.ActiveProvider = matched
 	if err := s.saveLocked(); err != nil {
 		return err
 	}
 	s.appendAuditLocked(types.AuditEvent{
 		EventType: "config.provider_change",
 		ActorID:   actorID,
-		TargetID:  active,
+		TargetID:  matched,
 	})
 	return nil
 }
