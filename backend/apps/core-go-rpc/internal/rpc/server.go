@@ -14,7 +14,6 @@ import (
 	authapp "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/application/auth"
 	domainauth "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/domain/auth"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/ingest"
-	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/llm"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/qa"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/store"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/types"
@@ -41,8 +40,31 @@ type DocumentObjectStore interface {
 	DeleteObject(ctx context.Context, key string) error
 }
 
-type TextEmbedder interface {
-	Embed(ctx context.Context, texts []string) ([][]float32, error)
+type LLMContextChunk struct {
+	DocID      string
+	DocName    string
+	ChunkID    string
+	ChunkIndex int
+	Score      int
+	Content    string
+}
+
+type LLMGenerateRequest struct {
+	OwnerUserID          string
+	ThreadID             string
+	TurnID               string
+	Question             string
+	ScopeType            string
+	ScopeDocIDs          []string
+	Contexts             []LLMContextChunk
+	PreviousTurnQuestion string
+	PreviousTurnAnswer   string
+	ActiveProvider       string
+}
+
+type LLMService interface {
+	GenerateAnswer(ctx context.Context, req LLMGenerateRequest) (string, error)
+	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
 }
 
 type VectorIndexer interface {
@@ -54,13 +76,12 @@ type VectorIndexer interface {
 type Server struct {
 	qav1.UnimplementedCoreServiceServer
 
-	store           *store.Store
-	authService     AuthUseCase
-	objectStore     DocumentObjectStore
-	answerGenerator llm.Generator
-	embedder        TextEmbedder
-	vectorIndexer   VectorIndexer
-	logger          *log.Logger
+	store         *store.Store
+	authService   AuthUseCase
+	objectStore   DocumentObjectStore
+	llmService    LLMService
+	vectorIndexer VectorIndexer
+	logger        *log.Logger
 }
 
 func NewServer(
@@ -83,22 +104,21 @@ func NewServer(
 	}
 
 	return &Server{
-		store:           store,
-		authService:     authService,
-		objectStore:     objectStore,
-		answerGenerator: nil,
-		logger:          logger,
+		store:       store,
+		authService: authService,
+		objectStore: objectStore,
+		llmService:  nil,
+		logger:      logger,
 	}
 }
 
-func (s *Server) WithVectorSearch(embedder TextEmbedder, vectorIndexer VectorIndexer) *Server {
-	s.embedder = embedder
+func (s *Server) WithVectorSearch(vectorIndexer VectorIndexer) *Server {
 	s.vectorIndexer = vectorIndexer
 	return s
 }
 
-func (s *Server) WithAnswerGenerator(generator llm.Generator) *Server {
-	s.answerGenerator = generator
+func (s *Server) WithLLMService(service LLMService) *Server {
+	s.llmService = service
 	return s
 }
 
@@ -425,8 +445,16 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	}
 
 	chunkMap := make(map[string][]types.Chunk, len(selectedDocs))
-	for _, doc := range selectedDocs {
-		chunkMap[doc.ID] = s.store.GetChunksForDoc(doc.ID)
+	for i, doc := range selectedDocs {
+		chunks := s.store.GetChunksForDoc(doc.ID)
+		updatedDoc, updatedChunks, err := s.ensureDocumentChunksReady(ctx, user.ID, doc, chunks)
+		if err != nil {
+			s.logger.Printf("document chunk repair warning: doc=%s err=%v", doc.ID, err)
+		} else {
+			selectedDocs[i] = updatedDoc
+			chunks = updatedChunks
+		}
+		chunkMap[doc.ID] = chunks
 	}
 	retrieved := s.retrieveChunks(ctx, user.ID, scope.QuestionBody, selectedDocs, chunkMap, 5)
 	citations := buildCitations(retrieved)
@@ -631,13 +659,13 @@ func (s *Server) generateAnswer(
 	previousTurns []types.Turn,
 	activeProvider string,
 ) (string, error) {
-	if s.answerGenerator == nil {
-		return "", status.Error(codes.FailedPrecondition, "LLM generator is not configured")
+	if s.llmService == nil {
+		return "", status.Error(codes.FailedPrecondition, "LLM service is not configured")
 	}
 
-	contexts := make([]llm.ContextChunk, 0, len(retrieved))
+	contexts := make([]LLMContextChunk, 0, len(retrieved))
 	for _, item := range retrieved {
-		contexts = append(contexts, llm.ContextChunk{
+		contexts = append(contexts, LLMContextChunk{
 			DocID:      item.Document.ID,
 			DocName:    item.Document.Name,
 			ChunkID:    item.Chunk.ID,
@@ -647,7 +675,7 @@ func (s *Server) generateAnswer(
 		})
 	}
 
-	llmReq := llm.Request{
+	llmReq := LLMGenerateRequest{
 		OwnerUserID:    ownerID,
 		ThreadID:       turn.ThreadID,
 		TurnID:         turn.ID,
@@ -663,15 +691,15 @@ func (s *Server) generateAnswer(
 		llmReq.PreviousTurnAnswer = last.Answer
 	}
 
-	answer, err := s.answerGenerator.GenerateAnswer(ctx, llmReq)
+	answer, err := s.llmService.GenerateAnswer(ctx, llmReq)
 	if err != nil {
 		s.logger.Printf("llm generate failed: %v", err)
-		if errors.Is(err, llm.ErrUnavailable) {
-			return "", status.Error(codes.FailedPrecondition, "LLM provider is unavailable: check provider selection and API key")
-		}
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "api_key") || strings.Contains(msg, "api key") || strings.Contains(msg, "unauthorized") || strings.Contains(msg, "401") {
 			return "", status.Error(codes.FailedPrecondition, "LLM provider authentication/config error: "+err.Error())
+		}
+		if strings.Contains(msg, "failedprecondition") {
+			return "", status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return "", status.Error(codes.Unavailable, "LLM provider call failed: "+err.Error())
 	}
@@ -787,6 +815,90 @@ func buildCitations(scored []qa.ScoredChunk) []types.Citation {
 	return out
 }
 
+func shouldRepairChunks(doc types.Document, chunks []types.Chunk) bool {
+	if len(chunks) == 0 {
+		return true
+	}
+	isPDF := strings.HasSuffix(strings.ToLower(strings.TrimSpace(doc.Name)), ".pdf") ||
+		strings.Contains(strings.ToLower(strings.TrimSpace(doc.MimeType)), "pdf")
+	if !isPDF {
+		return false
+	}
+
+	var b strings.Builder
+	for i, chunk := range chunks {
+		if i >= 3 {
+			break
+		}
+		if b.Len() > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(chunk.Content)
+	}
+	sample := b.String()
+	lower := strings.ToLower(sample)
+	if strings.Contains(lower, "endstream") || strings.Contains(lower, "endobj") {
+		return true
+	}
+	return !ingest.IsReadableText(sample)
+}
+
+func buildChunksForDoc(doc types.Document, pieces []string) []types.Chunk {
+	out := make([]types.Chunk, 0, len(pieces))
+	for i, content := range pieces {
+		out = append(out, types.Chunk{
+			ID:      types.NewID("chk"),
+			DocID:   doc.ID,
+			Index:   i,
+			Content: content,
+		})
+	}
+	return out
+}
+
+func (s *Server) ensureDocumentChunksReady(
+	ctx context.Context,
+	ownerID string,
+	doc types.Document,
+	existing []types.Chunk,
+) (types.Document, []types.Chunk, error) {
+	if !shouldRepairChunks(doc, existing) {
+		return doc, existing, nil
+	}
+
+	data, contentType, err := s.objectStore.GetObject(ctx, doc.StoragePath)
+	if err != nil {
+		return doc, existing, fmt.Errorf("load source object failed: %w", err)
+	}
+	text, err := ingest.ParseDocumentText(doc.Name, contentType, data)
+	if err != nil {
+		return doc, existing, fmt.Errorf("re-parse document failed: %w", err)
+	}
+	pieces := ingest.ChunkText(text, 700, 120)
+	if len(pieces) == 0 {
+		return doc, existing, errors.New("rebuild chunks produced empty content")
+	}
+	rebuilt := buildChunksForDoc(doc, pieces)
+
+	if s.vectorIndexer != nil {
+		if err := s.vectorIndexer.DeleteDocument(ctx, ownerID, doc.ID); err != nil {
+			s.logger.Printf("delete stale vectors warning: doc=%s err=%v", doc.ID, err)
+		}
+		if err := s.indexDocumentVectors(ctx, ownerID, doc, rebuilt); err != nil {
+			s.logger.Printf("re-index vectors warning: doc=%s err=%v", doc.ID, err)
+		}
+	}
+
+	doc.Status = "ready"
+	doc.ChunkCount = len(rebuilt)
+	doc.LastUpdatedAt = time.Now().UTC()
+	if err := s.store.UpsertDocument(doc, rebuilt); err != nil {
+		return doc, existing, fmt.Errorf("persist rebuilt chunks failed: %w", err)
+	}
+	s.logger.Printf("document chunks repaired: doc=%s old=%d new=%d", doc.ID, len(existing), len(rebuilt))
+	return doc, rebuilt, nil
+}
+
 func fallbackAnswer(question string, retrieved []qa.ScoredChunk, previousTurns []types.Turn) string {
 	if len(retrieved) == 0 {
 		if len(previousTurns) > 0 {
@@ -818,7 +930,7 @@ func fallbackAnswer(question string, retrieved []qa.ScoredChunk, previousTurns [
 }
 
 func (s *Server) indexDocumentVectors(ctx context.Context, ownerID string, doc types.Document, chunks []types.Chunk) error {
-	if s.embedder == nil || s.vectorIndexer == nil || len(chunks) == 0 {
+	if s.llmService == nil || s.vectorIndexer == nil || len(chunks) == 0 {
 		return nil
 	}
 
@@ -826,7 +938,7 @@ func (s *Server) indexDocumentVectors(ctx context.Context, ownerID string, doc t
 	for _, chunk := range chunks {
 		texts = append(texts, chunk.Content)
 	}
-	vectors, err := s.embedder.Embed(ctx, texts)
+	vectors, err := s.llmService.EmbedTexts(ctx, texts)
 	if err != nil {
 		return err
 	}
@@ -855,11 +967,11 @@ func (s *Server) retrieveChunks(
 	if len(selectedDocs) == 0 {
 		return nil
 	}
-	if s.embedder == nil || s.vectorIndexer == nil {
+	if s.llmService == nil || s.vectorIndexer == nil {
 		return fallback()
 	}
 
-	queryVecs, err := s.embedder.Embed(ctx, []string{question})
+	queryVecs, err := s.llmService.EmbedTexts(ctx, []string{question})
 	if err != nil || len(queryVecs) != 1 {
 		if err != nil {
 			s.logger.Printf("embed query warning: %v", err)

@@ -3,13 +3,15 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 PORT_CORE := 19090
+PORT_LLM := 51000
 PORT_API := 8080
 PORT_FRONTEND := 5173
 
 LOG_DIR := logs
+LLM_PID_FILE := $(LOG_DIR)/llm-python-rpc.pid
 
-.PHONY: help start stop restart _dispatch _start_core _start_api _start_frontend _stop_core _stop_api _stop_frontend
-.PHONY: all core core-go-rpc go-rpc api api-go frontend fe web
+.PHONY: help start stop restart _dispatch _start_llm _start_core _start_api _start_frontend _stop_llm _stop_core _stop_api _stop_frontend
+.PHONY: all llm llm-python-rpc py-rpc core core-go-rpc go-rpc api api-go frontend fe web
 
 help:
 	@echo "Usage:"
@@ -18,6 +20,7 @@ help:
 	@echo "  make restart <service|all>"
 	@echo ""
 	@echo "Services:"
+	@echo "  llm (aliases: llm-python-rpc, py-rpc)"
 	@echo "  core (aliases: core-go-rpc, go-rpc)"
 	@echo "  api (aliases: api-go)"
 	@echo "  frontend (aliases: fe, web)"
@@ -46,7 +49,8 @@ _dispatch:
 	if [ -z "$$service" ]; then service="all"; fi; \
 	case "$$service" in \
 		all) \
-			if [ "$$action" = "stop" ]; then list="frontend api core"; else list="core api frontend"; fi ;; \
+			if [ "$$action" = "stop" ]; then list="frontend api core llm"; else list="llm core api frontend"; fi ;; \
+		llm|llm-python-rpc|py-rpc) list="llm" ;; \
 		core|core-go-rpc|go-rpc) list="core" ;; \
 		api|api-go) list="api" ;; \
 		frontend|fe|web) list="frontend" ;; \
@@ -56,13 +60,39 @@ _dispatch:
 		$(MAKE) --no-print-directory _$${action}_$$s; \
 	done
 
+_start_llm:
+	@mkdir -p $(LOG_DIR)
+	@if [ -f "$(LLM_PID_FILE)" ]; then \
+		pid="$$(cat $(LLM_PID_FILE) 2>/dev/null || true)"; \
+		if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+			echo "[llm] already running (pid: $$pid, port: $(PORT_LLM))"; \
+			exit 0; \
+		fi; \
+		rm -f "$(LLM_PID_FILE)"; \
+	fi
+	@port=$(PORT_LLM); \
+	pids="$$(lsof -tiTCP:$$port -sTCP:LISTEN 2>/dev/null || true)"; \
+	if [ -n "$$pids" ]; then echo "[llm] already running on :$$port (pid: $$pids)"; exit 0; fi; \
+	echo "[llm] starting on :$$port"; \
+	nohup bash -lc 'cd backend/apps/llm-python-rpc && LLM_RPC_HOST=127.0.0.1 LLM_RPC_PORT=$(PORT_LLM) python3 -m app.server' > $(LOG_DIR)/llm-python-rpc.log 2>&1 & echo $$! > $(LLM_PID_FILE); \
+	sleep 2; \
+	pid="$$(cat $(LLM_PID_FILE) 2>/dev/null || true)"; \
+	pids="$$(lsof -tiTCP:$$port -sTCP:LISTEN 2>/dev/null || true)"; \
+	if [ -z "$$pid" ] || ! kill -0 "$$pid" 2>/dev/null || [ -z "$$pids" ]; then \
+		echo "[llm] failed to start, check $(LOG_DIR)/llm-python-rpc.log"; \
+		rm -f "$(LLM_PID_FILE)"; \
+		tail -n 30 $(LOG_DIR)/llm-python-rpc.log || true; \
+		exit 1; \
+	fi; \
+	echo "[llm] started (pid: $$pid)"
+
 _start_core:
 	@mkdir -p $(LOG_DIR)
 	@port=$(PORT_CORE); \
 	pids="$$(lsof -tiTCP:$$port -sTCP:LISTEN 2>/dev/null || true)"; \
 	if [ -n "$$pids" ]; then echo "[core] already running on :$$port (pid: $$pids)"; exit 0; fi; \
 	echo "[core] starting on :$$port"; \
-	nohup bash -lc 'cd backend && go run ./apps/core-go-rpc/cmd/server' > $(LOG_DIR)/core-go-rpc.log 2>&1 & \
+	nohup bash -lc 'cd backend && LLM_RPC_ADDR=127.0.0.1:$(PORT_LLM) go run ./apps/core-go-rpc/cmd/server' > $(LOG_DIR)/core-go-rpc.log 2>&1 & \
 	sleep 2; \
 	pids="$$(lsof -tiTCP:$$port -sTCP:LISTEN 2>/dev/null || true)"; \
 	if [ -z "$$pids" ]; then \
@@ -104,6 +134,24 @@ _start_frontend:
 	fi; \
 	echo "[frontend] started (pid: $$pids)"
 
+_stop_llm:
+	@pids=""; \
+	if [ -f "$(LLM_PID_FILE)" ]; then \
+		pid="$$(cat $(LLM_PID_FILE) 2>/dev/null || true)"; \
+		if [ -n "$$pid" ]; then pids="$$pid"; fi; \
+	fi; \
+	if [ -z "$$pids" ]; then \
+		pids="$$(pgrep -f 'backend/apps/llm-python-rpc.*app.server' 2>/dev/null || true)"; \
+	fi; \
+	if [ -z "$$pids" ]; then echo "[llm] not running"; rm -f "$(LLM_PID_FILE)"; exit 0; fi; \
+	echo "[llm] stopping pid: $$pids"; \
+	echo "$$pids" | xargs kill; \
+	sleep 1; \
+	left="$$(echo "$$pids" | xargs -I{} sh -c 'kill -0 {} 2>/dev/null && echo {}' || true)"; \
+	if [ -n "$$left" ]; then echo "$$left" | xargs kill -9; fi; \
+	rm -f "$(LLM_PID_FILE)"; \
+	echo "[llm] stopped"
+
 _stop_core:
 	@port=$(PORT_CORE); \
 	pids="$$(lsof -tiTCP:$$port -sTCP:LISTEN 2>/dev/null || true)"; \
@@ -140,5 +188,5 @@ _stop_frontend:
 %:
 	@:
 
-all core core-go-rpc go-rpc api api-go frontend fe web:
+all llm llm-python-rpc py-rpc core core-go-rpc go-rpc api api-go frontend fe web:
 	@:

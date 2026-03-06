@@ -692,6 +692,7 @@ var CoreService_ServiceDesc = grpc.ServiceDesc{
 
 const (
 	LlmService_Health_FullMethodName         = "/qa.v1.LlmService/Health"
+	LlmService_EmbedTexts_FullMethodName     = "/qa.v1.LlmService/EmbedTexts"
 	LlmService_GenerateAnswer_FullMethodName = "/qa.v1.LlmService/GenerateAnswer"
 )
 
@@ -700,6 +701,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type LlmServiceClient interface {
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthReply, error)
+	EmbedTexts(ctx context.Context, in *EmbedTextsRequest, opts ...grpc.CallOption) (*EmbedTextsReply, error)
 	GenerateAnswer(ctx context.Context, in *GenerateAnswerRequest, opts ...grpc.CallOption) (*GenerateAnswerReply, error)
 }
 
@@ -721,6 +723,16 @@ func (c *llmServiceClient) Health(ctx context.Context, in *Empty, opts ...grpc.C
 	return out, nil
 }
 
+func (c *llmServiceClient) EmbedTexts(ctx context.Context, in *EmbedTextsRequest, opts ...grpc.CallOption) (*EmbedTextsReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EmbedTextsReply)
+	err := c.cc.Invoke(ctx, LlmService_EmbedTexts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *llmServiceClient) GenerateAnswer(ctx context.Context, in *GenerateAnswerRequest, opts ...grpc.CallOption) (*GenerateAnswerReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GenerateAnswerReply)
@@ -736,6 +748,7 @@ func (c *llmServiceClient) GenerateAnswer(ctx context.Context, in *GenerateAnswe
 // for forward compatibility.
 type LlmServiceServer interface {
 	Health(context.Context, *Empty) (*HealthReply, error)
+	EmbedTexts(context.Context, *EmbedTextsRequest) (*EmbedTextsReply, error)
 	GenerateAnswer(context.Context, *GenerateAnswerRequest) (*GenerateAnswerReply, error)
 	mustEmbedUnimplementedLlmServiceServer()
 }
@@ -749,6 +762,9 @@ type UnimplementedLlmServiceServer struct{}
 
 func (UnimplementedLlmServiceServer) Health(context.Context, *Empty) (*HealthReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Health not implemented")
+}
+func (UnimplementedLlmServiceServer) EmbedTexts(context.Context, *EmbedTextsRequest) (*EmbedTextsReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EmbedTexts not implemented")
 }
 func (UnimplementedLlmServiceServer) GenerateAnswer(context.Context, *GenerateAnswerRequest) (*GenerateAnswerReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GenerateAnswer not implemented")
@@ -792,6 +808,24 @@ func _LlmService_Health_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LlmService_EmbedTexts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EmbedTextsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LlmServiceServer).EmbedTexts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LlmService_EmbedTexts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LlmServiceServer).EmbedTexts(ctx, req.(*EmbedTextsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LlmService_GenerateAnswer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GenerateAnswerRequest)
 	if err := dec(in); err != nil {
@@ -820,6 +854,10 @@ var LlmService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Health",
 			Handler:    _LlmService_Health_Handler,
+		},
+		{
+			MethodName: "EmbedTexts",
+			Handler:    _LlmService_EmbedTexts_Handler,
 		},
 		{
 			MethodName: "GenerateAnswer",

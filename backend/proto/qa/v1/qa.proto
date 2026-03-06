@@ -203,10 +203,23 @@ message GenerateAnswerRequest {
   repeated LlmContextChunk contexts = 7;
   string previous_turn_question = 8;
   string previous_turn_answer = 9;
+  string active_provider = 10;
 }
 
 message GenerateAnswerReply {
   string answer = 1;
+}
+
+message EmbeddingVector {
+  repeated float values = 1;
+}
+
+message EmbedTextsRequest {
+  repeated string texts = 1;
+}
+
+message EmbedTextsReply {
+  repeated EmbeddingVector vectors = 1;
 }
 
 service CoreService {
@@ -233,5 +246,6 @@ service CoreService {
 
 service LlmService {
   rpc Health(Empty) returns (HealthReply);
+  rpc EmbedTexts(EmbedTextsRequest) returns (EmbedTextsReply);
   rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerReply);
 }

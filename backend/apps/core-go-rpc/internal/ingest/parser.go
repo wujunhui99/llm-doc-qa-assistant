@@ -2,10 +2,17 @@ package ingest
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
+	"time"
+	"unicode"
 	"unicode/utf16"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var (
@@ -18,15 +25,26 @@ func ParseDocumentText(fileName, mimeType string, data []byte) (string, error) {
 	lowerName := strings.ToLower(fileName)
 	switch {
 	case strings.HasSuffix(lowerName, ".txt"), strings.HasSuffix(lowerName, ".md"), strings.HasSuffix(lowerName, ".markdown"):
-		text := strings.TrimSpace(string(data))
+		text := normalizeExtractedText(string(data))
 		if text == "" {
 			return "", errors.New("document is empty")
 		}
 		return text, nil
 	case strings.HasSuffix(lowerName, ".pdf") || strings.Contains(strings.ToLower(mimeType), "pdf"):
-		text := strings.TrimSpace(extractTextFromPDF(data))
+		text := normalizeExtractedText(extractTextFromPDF(data))
+		if !IsReadableText(text) {
+			if fallback, err := extractTextFromPDFWithPyPDF(data); err == nil {
+				cleanFallback := normalizeExtractedText(fallback)
+				if IsReadableText(cleanFallback) || len(cleanFallback) > len(text) {
+					text = cleanFallback
+				}
+			}
+		}
 		if text == "" {
 			return "", errors.New("unable to extract text from pdf")
+		}
+		if !IsReadableText(text) {
+			return "", errors.New("unable to extract readable text from pdf")
 		}
 		return text, nil
 	default:
@@ -58,6 +76,46 @@ func extractTextFromPDF(data []byte) string {
 	// Fallback: if PDF includes readable UTF-16 text segments.
 	utf16Text := extractUTF16Text(data)
 	return normalizeWhitespace(utf16Text)
+}
+
+func extractTextFromPDFWithPyPDF(data []byte) (string, error) {
+	const pyScript = `
+import io
+import sys
+
+try:
+    from pypdf import PdfReader
+except Exception as e:
+    raise RuntimeError(f"import pypdf failed: {e}")
+
+raw = sys.stdin.buffer.read()
+if not raw:
+    print("")
+    raise SystemExit(0)
+
+reader = PdfReader(io.BytesIO(raw))
+parts = []
+for page in reader.pages:
+    text = page.extract_text() or ""
+    text = text.strip()
+    if text:
+        parts.append(text)
+
+sys.stdout.write("\n".join(parts))
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "python3", "-c", pyScript)
+	cmd.Stdin = bytes.NewReader(data)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("pypdf extraction failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
 }
 
 func decodePDFLiteral(in string) string {
@@ -105,4 +163,44 @@ func normalizeWhitespace(in string) string {
 	}
 	merged := strings.Join(lines, " ")
 	return strings.Join(strings.Fields(merged), " ")
+}
+
+func normalizeExtractedText(in string) string {
+	if strings.TrimSpace(in) == "" {
+		return ""
+	}
+	in = strings.ReplaceAll(in, "\u00a0", " ")
+	in = strings.ReplaceAll(in, "\u200b", "")
+	in = norm.NFKC.String(in)
+	return normalizeWhitespace(in)
+}
+
+// IsReadableText reports whether extracted text has enough readable characters
+// to be used for retrieval and QA.
+func IsReadableText(in string) bool {
+	in = strings.TrimSpace(in)
+	if in == "" {
+		return false
+	}
+
+	runes := []rune(in)
+	if len(runes) < 16 {
+		return false
+	}
+
+	readable := 0
+	for _, r := range runes {
+		switch {
+		case unicode.IsSpace(r):
+			readable++
+		case unicode.Is(unicode.Han, r):
+			readable++
+		case r <= unicode.MaxASCII && (unicode.IsLetter(r) || unicode.IsDigit(r)):
+			readable++
+		case strings.ContainsRune("，。！？；：,.!?;:()[]{}<>-_/#'\"%+*", r):
+			readable++
+		}
+	}
+	ratio := float64(readable) / float64(len(runes))
+	return ratio >= 0.45
 }

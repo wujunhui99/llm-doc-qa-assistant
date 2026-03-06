@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -12,21 +11,23 @@ import (
 	"time"
 
 	authapp "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/application/auth"
-	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/embedding"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/minio"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/mysql"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/qdrant"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/security"
-	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/llm"
+	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/llmrpc"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/rpc"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/store"
 	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type config struct {
 	CoreRPCAddr          string
+	LLMRPCAddr           string
+	LLMRPCDialTimeoutSec int
 	DataDir              string
 	MySQLDSN             string
 	MinIOEndpoint        string
@@ -39,15 +40,6 @@ type config struct {
 	QdrantAPIKey         string
 	QdrantCollection     string
 	QdrantTimeoutSeconds int
-	SiliconFlowAPIBase   string
-	SiliconFlowAPIKey    string
-	SiliconFlowChatModel string
-	SiliconFlowTemp      float64
-	DefaultProvider      string
-	ProviderModelJSON    string
-	AgentMaxContexts     int
-	EmbeddingModel       string
-	EmbeddingTimeoutSec  int
 }
 
 func main() {
@@ -77,27 +69,25 @@ func main() {
 	sessionRepo := mysql.NewSessionRepository(db)
 	authService := authapp.NewService(userRepo, sessionRepo, security.PasswordHasher{}, security.TokenGenerator{}, s)
 
-	embedder := embedding.NewSiliconFlowEmbedder(
-		cfg.SiliconFlowAPIBase,
-		cfg.SiliconFlowAPIKey,
-		cfg.EmbeddingModel,
-		time.Duration(cfg.EmbeddingTimeoutSec)*time.Second,
-	)
-	chatClient := llm.NewSiliconFlowChatClient(
-		cfg.SiliconFlowAPIBase,
-		cfg.SiliconFlowAPIKey,
-		time.Duration(cfg.EmbeddingTimeoutSec)*time.Second,
-	)
-	agent := llm.NewAgent(chatClient, embedder, llm.Config{
-		DefaultProvider:   cfg.DefaultProvider,
-		ChatModel:         cfg.SiliconFlowChatModel,
-		Temperature:       cfg.SiliconFlowTemp,
-		MaxContextChunks:  cfg.AgentMaxContexts,
-		RequestTimeout:    time.Duration(cfg.EmbeddingTimeoutSec) * time.Second,
-		ProviderChatModel: parseProviderModelMapping(cfg.ProviderModelJSON, cfg.SiliconFlowChatModel),
-	})
+	llmRPCAddr := cfg.LLMRPCAddr
+	llmConn, err := dialLLMRPC(llmRPCAddr, time.Duration(cfg.LLMRPCDialTimeoutSec)*time.Second)
+	if err != nil && !strings.HasPrefix(llmRPCAddr, "unix://") {
+		fallbackAddr := "unix:///tmp/llm-python-rpc.sock"
+		if _, statErr := os.Stat(strings.TrimPrefix(fallbackAddr, "unix://")); statErr == nil {
+			llmConn, err = dialLLMRPC(fallbackAddr, time.Duration(cfg.LLMRPCDialTimeoutSec)*time.Second)
+			if err == nil {
+				logger.Printf("llm rpc dial fallback: %s -> %s", llmRPCAddr, fallbackAddr)
+				llmRPCAddr = fallbackAddr
+			}
+		}
+	}
+	if err != nil {
+		logger.Fatalf("connect llm rpc failed (%s): %v", cfg.LLMRPCAddr, err)
+	}
+	defer llmConn.Close()
 
-	coreServer := rpc.NewServer(s, authService, objectStore, logger).WithAnswerGenerator(agent)
+	llmClient := llmrpc.New(qav1.NewLlmServiceClient(llmConn))
+	coreServer := rpc.NewServer(s, authService, objectStore, logger).WithLLMService(llmClient)
 	if cfg.VectorSearchEnabled {
 		vectorClient := qdrant.NewClient(
 			cfg.QdrantEndpoint,
@@ -105,13 +95,11 @@ func main() {
 			cfg.QdrantCollection,
 			time.Duration(cfg.QdrantTimeoutSeconds)*time.Second,
 		)
-		if !embedder.Enabled() {
-			logger.Printf("vector search disabled: SILICONFLOW_API_KEY is empty")
-		} else if !vectorClient.Enabled() {
+		if !vectorClient.Enabled() {
 			logger.Printf("vector search disabled: QDRANT_ENDPOINT or QDRANT_COLLECTION is empty")
 		} else {
-			coreServer = coreServer.WithVectorSearch(embedder, vectorClient)
-			logger.Printf("vector search enabled: collection=%s endpoint=%s model=%s", cfg.QdrantCollection, cfg.QdrantEndpoint, cfg.EmbeddingModel)
+			coreServer = coreServer.WithVectorSearch(vectorClient)
+			logger.Printf("vector search enabled: collection=%s endpoint=%s llm_rpc=%s", cfg.QdrantCollection, cfg.QdrantEndpoint, llmRPCAddr)
 		}
 	}
 
@@ -178,6 +166,8 @@ func loadDotEnv(path string, logger *log.Logger) {
 func loadConfig() config {
 	return config{
 		CoreRPCAddr:          getenv("CORE_RPC_ADDR", ":19090"),
+		LLMRPCAddr:           getenv("LLM_RPC_ADDR", "127.0.0.1:51000"),
+		LLMRPCDialTimeoutSec: parseInt(getenv("LLM_RPC_DIAL_TIMEOUT_SECONDS", "8"), 8),
 		DataDir:              getenv("DATA_DIR", "./data"),
 		MySQLDSN:             getenv("MYSQL_DSN", "app:app123456@tcp(127.0.0.1:3306)/llm_doc_qa?parseTime=true&charset=utf8mb4&loc=Local"),
 		MinIOEndpoint:        getenv("MINIO_ENDPOINT", "127.0.0.1:9000"),
@@ -190,15 +180,6 @@ func loadConfig() config {
 		QdrantAPIKey:         getenv("QDRANT_API_KEY", ""),
 		QdrantCollection:     getenv("QDRANT_COLLECTION", "qa_chunks"),
 		QdrantTimeoutSeconds: parseInt(getenv("QDRANT_TIMEOUT_SECONDS", "10"), 10),
-		SiliconFlowAPIBase:   getenv("SILICONFLOW_API_BASE", "https://api.siliconflow.cn/v1"),
-		SiliconFlowAPIKey:    getenv("SILICONFLOW_API_KEY", ""),
-		SiliconFlowChatModel: getenv("SILICONFLOW_CHAT_MODEL", "Pro/MiniMaxAI/MiniMax-M2.5"),
-		SiliconFlowTemp:      parseFloat(getenv("SILICONFLOW_TEMPERATURE", "0.2"), 0.2),
-		DefaultProvider:      getenv("LLM_PROVIDER", "siliconflow"),
-		ProviderModelJSON:    getenv("SILICONFLOW_PROVIDER_CHAT_MODELS_JSON", ""),
-		AgentMaxContexts:     parseInt(getenv("LLM_AGENT_MAX_CONTEXT_CHUNKS", "6"), 6),
-		EmbeddingModel:       getenv("SILICONFLOW_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-4B"),
-		EmbeddingTimeoutSec:  parseInt(getenv("SILICONFLOW_TIMEOUT_SECONDS", "30"), 30),
 	}
 }
 
@@ -230,41 +211,13 @@ func parseInt(raw string, def int) int {
 	return out
 }
 
-func parseFloat(raw string, def float64) float64 {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return def
-	}
-	var out float64
-	_, err := fmt.Sscanf(raw, "%f", &out)
-	if err != nil {
-		return def
-	}
-	return out
-}
-
-func parseProviderModelMapping(rawJSON string, defaultModel string) map[string]string {
-	out := map[string]string{
-		"siliconflow": defaultModel,
-		"mock":        defaultModel,
-		"openai":      defaultModel,
-		"claude":      defaultModel,
-		"local":       defaultModel,
-	}
-	rawJSON = strings.TrimSpace(rawJSON)
-	if rawJSON == "" {
-		return out
-	}
-	var parsed map[string]string
-	if err := json.Unmarshal([]byte(rawJSON), &parsed); err != nil {
-		return out
-	}
-	for k, v := range parsed {
-		key := strings.ToLower(strings.TrimSpace(k))
-		value := strings.TrimSpace(v)
-		if key != "" && value != "" {
-			out[key] = value
-		}
-	}
-	return out
+func dialLLMRPC(addr string, timeout time.Duration) (*grpc.ClientConn, error) {
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), timeout)
+	defer dialCancel()
+	return grpc.DialContext(
+		dialCtx,
+		addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
 }

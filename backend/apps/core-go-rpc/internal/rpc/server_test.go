@@ -14,7 +14,6 @@ import (
 
 	domainauth "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/domain/auth"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/ingest"
-	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/llm"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/qa"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/store"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/types"
@@ -24,15 +23,23 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type fakeAnswerGenerator struct {
-	generateAnswerFn func(ctx context.Context, in llm.Request) (string, error)
+type fakeLLMService struct {
+	generateAnswerFn func(ctx context.Context, in LLMGenerateRequest) (string, error)
+	embedTextsFn     func(ctx context.Context, texts []string) ([][]float32, error)
 }
 
-func (m *fakeAnswerGenerator) GenerateAnswer(ctx context.Context, in llm.Request) (string, error) {
+func (m *fakeLLMService) GenerateAnswer(ctx context.Context, in LLMGenerateRequest) (string, error) {
 	if m.generateAnswerFn != nil {
 		return m.generateAnswerFn(ctx, in)
 	}
 	return "mock answer", nil
+}
+
+func (m *fakeLLMService) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	if m.embedTextsFn != nil {
+		return m.embedTextsFn(ctx, texts)
+	}
+	return nil, nil
 }
 
 type fakeAuthUseCase struct {
@@ -58,24 +65,31 @@ func (f fakeAuthUseCase) Authenticate(_ context.Context, token string) (domainau
 	return f.user, nil
 }
 
-type fakeObjectStore struct{}
+type fakeObjectStore struct {
+	putObjectFn    func(ctx context.Context, key string, data []byte, contentType string) error
+	getObjectFn    func(ctx context.Context, key string) ([]byte, string, error)
+	deleteObjectFn func(ctx context.Context, key string) error
+}
 
-func (fakeObjectStore) PutObject(_ context.Context, _ string, _ []byte, _ string) error { return nil }
-func (fakeObjectStore) GetObject(_ context.Context, _ string) ([]byte, string, error) {
+func (f fakeObjectStore) PutObject(ctx context.Context, key string, data []byte, contentType string) error {
+	if f.putObjectFn != nil {
+		return f.putObjectFn(ctx, key, data, contentType)
+	}
+	return nil
+}
+
+func (f fakeObjectStore) GetObject(ctx context.Context, key string) ([]byte, string, error) {
+	if f.getObjectFn != nil {
+		return f.getObjectFn(ctx, key)
+	}
 	return nil, "", errors.New("not implemented")
 }
-func (fakeObjectStore) DeleteObject(_ context.Context, _ string) error { return nil }
 
-type fakeEmbedder struct {
-	vectors [][]float32
-	err     error
-}
-
-func (f fakeEmbedder) Embed(_ context.Context, _ []string) ([][]float32, error) {
-	if f.err != nil {
-		return nil, f.err
+func (f fakeObjectStore) DeleteObject(ctx context.Context, key string) error {
+	if f.deleteObjectFn != nil {
+		return f.deleteObjectFn(ctx, key)
 	}
-	return f.vectors, nil
+	return nil
 }
 
 type fakeVectorIndexer struct {
@@ -170,9 +184,9 @@ func TestBuildCitationsTruncatesExcerpt(t *testing.T) {
 	}
 }
 
-func TestGenerateAnswerUsesAgentGenerator(t *testing.T) {
-	answerGen := &fakeAnswerGenerator{
-		generateAnswerFn: func(_ context.Context, in llm.Request) (string, error) {
+func TestGenerateAnswerUsesLLMRPC(t *testing.T) {
+	llmSvc := &fakeLLMService{
+		generateAnswerFn: func(_ context.Context, in LLMGenerateRequest) (string, error) {
 			if in.OwnerUserID != "usr_1" || in.ThreadID != "th_1" || in.TurnID != "turn_1" {
 				t.Fatalf("unexpected request identity fields: %+v", in)
 			}
@@ -187,8 +201,8 @@ func TestGenerateAnswerUsesAgentGenerator(t *testing.T) {
 	}
 
 	s := &Server{
-		answerGenerator: answerGen,
-		logger:          log.New(io.Discard, "", 0),
+		llmService: llmSvc,
+		logger:     log.New(io.Discard, "", 0),
 	}
 
 	retrieved := []qa.ScoredChunk{
@@ -210,16 +224,16 @@ func TestGenerateAnswerUsesAgentGenerator(t *testing.T) {
 	}
 }
 
-func TestGenerateAnswerReturnsUnavailableOnGeneratorError(t *testing.T) {
-	answerGen := &fakeAnswerGenerator{
-		generateAnswerFn: func(_ context.Context, _ llm.Request) (string, error) {
+func TestGenerateAnswerReturnsUnavailableOnLLMError(t *testing.T) {
+	llmSvc := &fakeLLMService{
+		generateAnswerFn: func(_ context.Context, _ LLMGenerateRequest) (string, error) {
 			return "", errors.New("llm unavailable")
 		},
 	}
 
 	s := &Server{
-		answerGenerator: answerGen,
-		logger:          log.New(io.Discard, "", 0),
+		llmService: llmSvc,
+		logger:     log.New(io.Discard, "", 0),
 	}
 
 	retrieved := []qa.ScoredChunk{
@@ -240,8 +254,8 @@ func TestGenerateAnswerReturnsUnavailableOnGeneratorError(t *testing.T) {
 	}
 }
 
-func TestGenerateAnswerReturnsFailedPreconditionWhenGeneratorNil(t *testing.T) {
-	s := &Server{answerGenerator: nil, logger: log.New(io.Discard, "", 0)}
+func TestGenerateAnswerReturnsFailedPreconditionWhenLLMNil(t *testing.T) {
+	s := &Server{llmService: nil, logger: log.New(io.Discard, "", 0)}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
 	_, err := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "")
@@ -336,8 +350,8 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 	}
 
 	callCount := 0
-	answerGen := &fakeAnswerGenerator{
-		generateAnswerFn: func(_ context.Context, in llm.Request) (string, error) {
+	llmSvc := &fakeLLMService{
+		generateAnswerFn: func(_ context.Context, in LLMGenerateRequest) (string, error) {
 			callCount++
 			switch callCount {
 			case 1:
@@ -364,11 +378,11 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 	}
 
 	server := &Server{
-		store:           st,
-		authService:     fakeAuthUseCase{user: user},
-		objectStore:     fakeObjectStore{},
-		answerGenerator: answerGen,
-		logger:          log.New(io.Discard, "", 0),
+		store:       st,
+		authService: fakeAuthUseCase{user: user},
+		objectStore: fakeObjectStore{},
+		llmService:  llmSvc,
+		logger:      log.New(io.Discard, "", 0),
 	}
 
 	turn1, err := server.CreateTurn(context.Background(), &qav1.CreateTurnRequest{
@@ -406,6 +420,93 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 	}
 }
 
+func TestCreateTurnRepairsUnreadablePDFChunks(t *testing.T) {
+	tmp := t.TempDir()
+	st, err := store.New(filepath.Join(tmp, "state.json"), filepath.Join(tmp, "audit.log"))
+	if err != nil {
+		t.Fatalf("init store failed: %v", err)
+	}
+
+	user := domainauth.User{ID: "usr_pdf", Email: "pdf@example.com", CreatedAt: time.Now().UTC()}
+	doc := types.Document{
+		ID:            "doc_pdf",
+		OwnerUserID:   user.ID,
+		Name:          "spec.pdf",
+		SizeBytes:     1024,
+		MimeType:      "application/pdf",
+		StoragePath:   "usr_pdf/doc_pdf.pdf",
+		Status:        "ready",
+		ChunkCount:    1,
+		CreatedAt:     time.Now().UTC(),
+		LastUpdatedAt: time.Now().UTC(),
+	}
+	badChunks := []types.Chunk{
+		{ID: "chk_bad", DocID: doc.ID, Index: 0, Content: "꣄骤廿Ɦ endstream 㰼 obj"},
+	}
+	if err := st.UpsertDocument(doc, badChunks); err != nil {
+		t.Fatalf("seed bad doc failed: %v", err)
+	}
+	thread := types.Thread{ID: "th_pdf", OwnerUserID: user.ID, Title: "pdf", CreatedAt: time.Now().UTC()}
+	if err := st.CreateThread(thread); err != nil {
+		t.Fatalf("create thread failed: %v", err)
+	}
+
+	pseudoPDF := []byte("%PDF-1.4\nBT (项目概述 智能文档问答助手用于上传文档并回答问题) Tj ET\n%%EOF")
+	obj := fakeObjectStore{
+		getObjectFn: func(_ context.Context, key string) ([]byte, string, error) {
+			if key != doc.StoragePath {
+				t.Fatalf("unexpected object key: %s", key)
+			}
+			return pseudoPDF, "application/pdf", nil
+		},
+	}
+	llmSvc := &fakeLLMService{
+		generateAnswerFn: func(_ context.Context, req LLMGenerateRequest) (string, error) {
+			if len(req.Contexts) == 0 {
+				t.Fatalf("expected contexts after repair")
+			}
+			joined := req.Contexts[0].Content
+			if !strings.Contains(joined, "项目概述") {
+				t.Fatalf("expected repaired chunk to contain 项目概述, got: %s", joined)
+			}
+			return "项目概述：智能文档问答助手用于上传文档并回答问题。", nil
+		},
+	}
+
+	server := &Server{
+		store:       st,
+		authService: fakeAuthUseCase{user: user},
+		objectStore: obj,
+		llmService:  llmSvc,
+		logger:      log.New(io.Discard, "", 0),
+	}
+
+	out, err := server.CreateTurn(context.Background(), &qav1.CreateTurnRequest{
+		Token:       "token",
+		ThreadId:    thread.ID,
+		Message:     "这个文档项目的 项目概述 是什么",
+		ScopeType:   "doc",
+		ScopeDocIds: []string{doc.ID},
+	})
+	if err != nil {
+		t.Fatalf("create turn failed: %v", err)
+	}
+	if !strings.Contains(out.GetTurn().GetAnswer(), "项目概述") {
+		t.Fatalf("unexpected answer: %s", out.GetTurn().GetAnswer())
+	}
+	if len(out.GetCitations()) == 0 {
+		t.Fatalf("expected citations after repair")
+	}
+
+	rebuilt := st.GetChunksForDoc(doc.ID)
+	if len(rebuilt) == 0 {
+		t.Fatalf("expected rebuilt chunks persisted")
+	}
+	if strings.Contains(strings.ToLower(rebuilt[0].Content), "endstream") {
+		t.Fatalf("expected repaired chunks without raw pdf tokens, got: %s", rebuilt[0].Content)
+	}
+}
+
 func TestRetrieveChunksUsesVectorHitsWithinScope(t *testing.T) {
 	doc1 := types.Document{ID: "doc_1", Name: "a.md"}
 	doc2 := types.Document{ID: "doc_2", Name: "b.md"}
@@ -419,8 +520,13 @@ func TestRetrieveChunksUsesVectorHitsWithinScope(t *testing.T) {
 	}
 
 	s := &Server{
-		embedder: fakeEmbedder{
-			vectors: [][]float32{{0.1, 0.2, 0.3}},
+		llmService: &fakeLLMService{
+			embedTextsFn: func(_ context.Context, texts []string) ([][]float32, error) {
+				if len(texts) != 1 || texts[0] != "question" {
+					t.Fatalf("unexpected embed request: %+v", texts)
+				}
+				return [][]float32{{0.1, 0.2, 0.3}}, nil
+			},
 		},
 		vectorIndexer: fakeVectorIndexer{
 			hits: []types.VectorHit{
@@ -456,7 +562,11 @@ func TestRetrieveChunksFallsBackToLexicalWhenVectorSearchFails(t *testing.T) {
 	}
 
 	s := &Server{
-		embedder:      fakeEmbedder{err: errors.New("embed failed")},
+		llmService: &fakeLLMService{
+			embedTextsFn: func(_ context.Context, _ []string) ([][]float32, error) {
+				return nil, errors.New("embed failed")
+			},
+		},
 		vectorIndexer: fakeVectorIndexer{},
 		logger:        log.New(io.Discard, "", 0),
 	}
