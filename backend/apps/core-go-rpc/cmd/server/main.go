@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 	authapp "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/application/auth"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/embedding"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/infrastructure/minio"
@@ -21,6 +20,7 @@ import (
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/llm"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/rpc"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/store"
+	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 
 	"google.golang.org/grpc"
 )
@@ -52,6 +52,7 @@ type config struct {
 
 func main() {
 	logger := log.New(log.Writer(), "[core-go-rpc] ", log.LstdFlags|log.LUTC)
+	loadDotEnv("./apps/core-go-rpc/.env", logger)
 	cfg := loadConfig()
 
 	statePath := filepath.Join(cfg.DataDir, "state.json")
@@ -125,6 +126,52 @@ func main() {
 	logger.Printf("core grpc listening on %s", cfg.CoreRPCAddr)
 	if err := server.Serve(listener); err != nil {
 		logger.Fatalf("server failed: %v", err)
+	}
+}
+
+func loadDotEnv(path string, logger *log.Logger) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.Printf("load .env failed (%s): %v", path, err)
+		}
+		return
+	}
+
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		raw := strings.TrimSpace(line)
+		if raw == "" || strings.HasPrefix(raw, "#") {
+			continue
+		}
+		if strings.HasPrefix(raw, "export ") {
+			raw = strings.TrimSpace(strings.TrimPrefix(raw, "export "))
+		}
+
+		idx := strings.Index(raw, "=")
+		if idx <= 0 {
+			logger.Printf("ignore invalid .env line %d in %s", i+1, path)
+			continue
+		}
+
+		key := strings.TrimSpace(raw[:idx])
+		val := strings.TrimSpace(raw[idx+1:])
+		if key == "" {
+			continue
+		}
+		if len(val) >= 2 {
+			if (strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"")) ||
+				(strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'")) {
+				val = val[1 : len(val)-1]
+			}
+		}
+
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		if err := os.Setenv(key, val); err != nil {
+			logger.Printf("set env from .env failed for %s: %v", key, err)
+		}
 	}
 }
 

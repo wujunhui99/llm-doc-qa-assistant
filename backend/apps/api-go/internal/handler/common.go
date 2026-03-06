@@ -57,6 +57,9 @@ func writeGRPCError(w http.ResponseWriter, err error) {
 	case codes.AlreadyExists:
 		httpCode = http.StatusConflict
 		errorCode = "conflict"
+	case codes.FailedPrecondition:
+		httpCode = http.StatusPreconditionFailed
+		errorCode = "failed_precondition"
 	case codes.DeadlineExceeded:
 		httpCode = http.StatusGatewayTimeout
 		errorCode = "timeout"

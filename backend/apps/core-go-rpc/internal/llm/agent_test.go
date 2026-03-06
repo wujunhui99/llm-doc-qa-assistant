@@ -36,7 +36,7 @@ func (f *fakeChat) ChatCompletion(_ context.Context, _ []ChatMessage, model stri
 	return f.answer, nil
 }
 
-func TestAgentFallbackWhenNoContexts(t *testing.T) {
+func TestAgentUsesChatWhenNoContexts(t *testing.T) {
 	a := NewAgent(&fakeChat{available: true, answer: "ok"}, nil, Config{})
 	out, err := a.GenerateAnswer(context.Background(), Request{
 		Question:           "q",
@@ -46,8 +46,19 @@ func TestAgentFallbackWhenNoContexts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out == "" {
-		t.Fatalf("expected fallback content")
+	if out != "ok" {
+		t.Fatalf("expected chat output, got %q", out)
+	}
+}
+
+func TestAgentNoContextsReturnsErrorWhenChatUnavailable(t *testing.T) {
+	a := NewAgent(&fakeChat{available: false}, nil, Config{})
+	_, err := a.GenerateAnswer(context.Background(), Request{
+		Question: "你好",
+		Contexts: nil,
+	})
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable, got %v", err)
 	}
 }
 
@@ -106,20 +117,17 @@ func TestAgentReranksByEmbeddingSimilarity(t *testing.T) {
 	}
 }
 
-func TestAgentFallsBackWhenChatFails(t *testing.T) {
+func TestAgentReturnsErrorWhenChatFails(t *testing.T) {
 	chat := &fakeChat{available: true, err: errors.New("chat down")}
 	a := NewAgent(chat, nil, Config{})
 
-	out, err := a.GenerateAnswer(context.Background(), Request{
+	_, err := a.GenerateAnswer(context.Background(), Request{
 		Question: "q",
 		Contexts: []ContextChunk{
 			{DocID: "d1", DocName: "doc", ChunkID: "c1", ChunkIndex: 0, Content: "ctx"},
 		},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if out == "" {
-		t.Fatalf("expected fallback text")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
 	}
 }

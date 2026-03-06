@@ -12,13 +12,16 @@ import (
 	"testing"
 	"time"
 
-	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 	domainauth "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/domain/auth"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/ingest"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/llm"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/qa"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/store"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/types"
+	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakeAnswerGenerator struct {
@@ -198,13 +201,16 @@ func TestGenerateAnswerUsesAgentGenerator(t *testing.T) {
 	turn := types.Turn{ID: "turn_1", ThreadID: "th_1", Question: "q", ScopeType: "all"}
 	prev := []types.Turn{{Question: "prev q", Answer: "prev a"}}
 
-	answer := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, prev, "openai")
+	answer, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, prev, "openai")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if answer != "answer from agent" {
 		t.Fatalf("expected agent answer, got %q", answer)
 	}
 }
 
-func TestGenerateAnswerFallsBackOnGeneratorError(t *testing.T) {
+func TestGenerateAnswerReturnsUnavailableOnGeneratorError(t *testing.T) {
 	answerGen := &fakeAnswerGenerator{
 		generateAnswerFn: func(_ context.Context, _ llm.Request) (string, error) {
 			return "", errors.New("llm unavailable")
@@ -225,19 +231,25 @@ func TestGenerateAnswerFallsBackOnGeneratorError(t *testing.T) {
 	}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
-	answer := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, nil, "")
-	if !strings.Contains(answer, "根据检索到的文档证据") {
-		t.Fatalf("expected fallback answer content, got %q", answer)
+	_, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, nil, "")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("expected unavailable status, got %v", status.Code(err))
 	}
 }
 
-func TestGenerateAnswerFallsBackWhenGeneratorNil(t *testing.T) {
+func TestGenerateAnswerReturnsFailedPreconditionWhenGeneratorNil(t *testing.T) {
 	s := &Server{answerGenerator: nil, logger: log.New(io.Discard, "", 0)}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
-	answer := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "")
-	if !strings.Contains(answer, "未在当前作用域中检索到足够证据") {
-		t.Fatalf("expected no-evidence fallback answer, got %q", answer)
+	_, err := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "")
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected failed precondition status, got %v", status.Code(err))
 	}
 }
 

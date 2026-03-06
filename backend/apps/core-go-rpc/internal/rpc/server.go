@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 	authapp "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/application/auth"
 	domainauth "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/domain/auth"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/ingest"
@@ -19,6 +18,7 @@ import (
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/qa"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/store"
 	"llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/types"
+	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -450,7 +450,10 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	}
 
 	activeProvider := s.store.GetProvider().ActiveProvider
-	answer := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider)
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider)
+	if err != nil {
+		return nil, err
+	}
 	turn.Answer = answer
 
 	items := []types.TurnItem{
@@ -627,9 +630,9 @@ func (s *Server) generateAnswer(
 	retrieved []qa.ScoredChunk,
 	previousTurns []types.Turn,
 	activeProvider string,
-) string {
+) (string, error) {
 	if s.answerGenerator == nil {
-		return fallbackAnswer(turn.Question, retrieved, previousTurns)
+		return "", status.Error(codes.FailedPrecondition, "LLM generator is not configured")
 	}
 
 	contexts := make([]llm.ContextChunk, 0, len(retrieved))
@@ -662,14 +665,21 @@ func (s *Server) generateAnswer(
 
 	answer, err := s.answerGenerator.GenerateAnswer(ctx, llmReq)
 	if err != nil {
-		s.logger.Printf("llm generate failed, fallback used: %v", err)
-		return fallbackAnswer(turn.Question, retrieved, previousTurns)
+		s.logger.Printf("llm generate failed: %v", err)
+		if errors.Is(err, llm.ErrUnavailable) {
+			return "", status.Error(codes.FailedPrecondition, "LLM provider is unavailable: check provider selection and API key")
+		}
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "api_key") || strings.Contains(msg, "api key") || strings.Contains(msg, "unauthorized") || strings.Contains(msg, "401") {
+			return "", status.Error(codes.FailedPrecondition, "LLM provider authentication/config error: "+err.Error())
+		}
+		return "", status.Error(codes.Unavailable, "LLM provider call failed: "+err.Error())
 	}
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
-		return fallbackAnswer(turn.Question, retrieved, previousTurns)
+		return "", status.Error(codes.Unavailable, "LLM provider returned empty answer")
 	}
-	return answer
+	return answer, nil
 }
 
 func (s *Server) authenticate(ctx context.Context, token string) (domainauth.User, error) {

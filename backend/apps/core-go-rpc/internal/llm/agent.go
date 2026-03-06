@@ -90,7 +90,7 @@ func (a *Agent) GenerateAnswer(ctx context.Context, req Request) (string, error)
 	prevA := strings.TrimSpace(req.PreviousTurnAnswer)
 
 	if len(req.Contexts) == 0 {
-		return fallbackNoContext(prevA), nil
+		return a.generateWithoutContexts(ctx, req, question, prevQ, prevA)
 	}
 
 	selected := a.selectContexts(ctx, question, req.Contexts)
@@ -99,7 +99,7 @@ func (a *Agent) GenerateAnswer(ctx context.Context, req Request) (string, error)
 	}
 
 	if a.chat == nil || !a.chat.Available() {
-		return fallbackAnswer(question, prevA, selected), nil
+		return "", ErrUnavailable
 	}
 
 	model := a.resolveModel(req.ActiveProvider)
@@ -110,11 +110,32 @@ func (a *Agent) GenerateAnswer(ctx context.Context, req Request) (string, error)
 
 	answer, err := a.chat.ChatCompletion(callCtx, messages, model, a.cfg.Temperature)
 	if err != nil {
-		return fallbackAnswer(question, prevA, selected), nil
+		return "", fmt.Errorf("chat completion failed: %w", err)
 	}
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
-		return fallbackAnswer(question, prevA, selected), nil
+		return "", errors.New("chat completion returned empty answer")
+	}
+	return answer, nil
+}
+
+func (a *Agent) generateWithoutContexts(ctx context.Context, req Request, question, prevQ, prevA string) (string, error) {
+	if a.chat == nil || !a.chat.Available() {
+		return "", ErrUnavailable
+	}
+
+	model := a.resolveModel(req.ActiveProvider)
+	messages := buildNoContextMessages(question, prevQ, prevA, req.ScopeType)
+	callCtx, cancel := context.WithTimeout(ctx, a.cfg.RequestTimeout)
+	defer cancel()
+
+	answer, err := a.chat.ChatCompletion(callCtx, messages, model, a.cfg.Temperature)
+	if err != nil {
+		return "", fmt.Errorf("chat completion failed: %w", err)
+	}
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return "", errors.New("chat completion returned empty answer")
 	}
 	return answer, nil
 }
@@ -209,6 +230,32 @@ func buildMessages(question, previousQuestion, previousAnswer, scopeType string,
 				previousAnswer,
 				question,
 				strings.Join(contextLines, "\n"),
+			),
+		},
+	}
+}
+
+func buildNoContextMessages(question, previousQuestion, previousAnswer, scopeType string) []ChatMessage {
+	scopeType = strings.TrimSpace(scopeType)
+	if scopeType == "" {
+		scopeType = "all"
+	}
+
+	return []ChatMessage{
+		{
+			Role: "system",
+			Content: "你是文档问答助手。当前没有检索到任何文档证据。" +
+				"你可以进行简短通用对话，但要明确说明回答不基于文档证据。" +
+				"如果用户询问文档内容，请提示其上传文档或切换到合适的 @all/@doc 作用域。",
+		},
+		{
+			Role: "user",
+			Content: fmt.Sprintf(
+				"作用域: %s\n上一轮问题: %s\n上一轮答案: %s\n当前问题: %s\n当前证据: 无",
+				scopeType,
+				previousQuestion,
+				previousAnswer,
+				question,
 			),
 		},
 	}
