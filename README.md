@@ -2,6 +2,9 @@
 
 Frontend + Go/Python microservices for document QA (RAG + multi-turn agent QA).
 
+## Online Access
+- Project URL: [http://43.128.109.136:5173/](http://43.128.109.136:5173/)
+
 ## Stack
 - Frontend: React (Vite)
 - Backend:
