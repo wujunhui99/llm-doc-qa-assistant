@@ -52,8 +52,8 @@ make restart frontend
 - Default embedding model: `Qwen/Qwen3-Embedding-4B`
 - Provider adapter defaults:
   - active: `siliconflow`
-  - chat adapters: `siliconflow`, `ollama`
-  - reserved chat adapters: `openai`/`chatgpt`, `claude`
+  - chat adapters: `siliconflow`, `ollama`, `openai`/`chatgpt`
+  - reserved chat adapters: `claude`
   - embedding path: fixed to `siliconflow` pipeline (not provider-routed)
   - ollama request timeout: `OLLAMA_TIMEOUT_SECONDS=15` (default, fail-fast)
 
@@ -65,6 +65,9 @@ go test ./...
 cd backend/apps/agent-python-rpc
 python3 -m unittest discover -s tests -p 'test_*.py'
 ```
+
+## API docs artifact
+- OpenAPI spec: `docs/generated/openapi.yaml`
 
 ## SSE turn streaming
 - Endpoint: `POST /api/threads/{thread_id}/turns/stream`

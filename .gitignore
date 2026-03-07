@@ -4,6 +4,7 @@ backend/.cache/
 backend/backend/
 backend/apps/**/data/
 .codex/
+.env
 
 # Frontend
 frontend/node_modules/

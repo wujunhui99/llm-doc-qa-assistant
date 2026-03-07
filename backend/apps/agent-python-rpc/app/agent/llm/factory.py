@@ -16,7 +16,7 @@ def build_chat_clients(cfg: Config) -> Dict[str, BaseChatClient]:
         "siliconflow": SiliconFlowClient(cfg.api_base, cfg.api_key, cfg.timeout_seconds),
     }
 
-    # OpenAI/Claude remain reserved stubs; Ollama is active.
+    # OpenAI and Ollama are active chat providers; Claude remains a reserved stub.
     clients["openai"] = OpenAIClient(
         api_base=(os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1").strip() or "https://api.openai.com/v1"),
         api_key=os.getenv("OPENAI_API_KEY", "").strip(),

@@ -49,12 +49,13 @@ class Config:
         load_dotenv(service_root / ".env")
 
         default_model = os.getenv("SILICONFLOW_CHAT_MODEL", "Pro/MiniMaxAI/MiniMax-M2.5").strip() or "Pro/MiniMaxAI/MiniMax-M2.5"
+        openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
         ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", "qwen3.5:latest").strip() or "qwen3.5:latest"
         provider_models = {
             "siliconflow": default_model,
             "mock": default_model,
-            "openai": default_model,
-            "chatgpt": default_model,
+            "openai": openai_chat_model,
+            "chatgpt": openai_chat_model,
             "claude": default_model,
             "ollama": ollama_chat_model,
             "local": ollama_chat_model,
