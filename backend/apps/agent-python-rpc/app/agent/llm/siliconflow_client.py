@@ -24,7 +24,7 @@ class SiliconFlowClient(BaseChatClient):
             "Accept": "application/json",
         }
 
-    def chat_completion(self, messages: Sequence[dict], model: str, temperature: float) -> str:
+    def chat_completion(self, messages: Sequence[dict], model: str, temperature: float, think_mode: bool = False) -> str:
         if not self.available():
             raise RuntimeError("SILICONFLOW_API_KEY is empty")
 

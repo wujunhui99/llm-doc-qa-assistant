@@ -28,19 +28,27 @@ func (l *ThreadLogic) CreateThread(ctx context.Context, token, title string) (*q
 	return l.svcCtx.Core.CreateThread(ctx, &qav1.CreateThreadRequest{Token: token, Title: title})
 }
 
-func (l *ThreadLogic) CreateTurn(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string) (*qav1.CreateTurnReply, error) {
+func (l *ThreadLogic) CreateTurn(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string, thinkMode bool) (*qav1.CreateTurnReply, error) {
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
-	return l.svcCtx.Core.CreateTurn(ctx, &qav1.CreateTurnRequest{Token: token, ThreadId: threadID, Message: message, ScopeType: scopeType, ScopeDocIds: scopeDocIDs})
+	return l.svcCtx.Core.CreateTurn(ctx, &qav1.CreateTurnRequest{
+		Token:       token,
+		ThreadId:    threadID,
+		Message:     message,
+		ScopeType:   scopeType,
+		ScopeDocIds: scopeDocIDs,
+		ThinkMode:   thinkMode,
+	})
 }
 
-func (l *ThreadLogic) CreateTurnStream(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string) (qav1.CoreService_CreateTurnStreamClient, error) {
+func (l *ThreadLogic) CreateTurnStream(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string, thinkMode bool) (qav1.CoreService_CreateTurnStreamClient, error) {
 	return l.svcCtx.Core.CreateTurnStream(ctx, &qav1.CreateTurnRequest{
 		Token:       token,
 		ThreadId:    threadID,
 		Message:     message,
 		ScopeType:   scopeType,
 		ScopeDocIds: scopeDocIDs,
+		ThinkMode:   thinkMode,
 	})
 }
 

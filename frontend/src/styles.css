@@ -295,6 +295,24 @@ td {
   white-space: pre-line;
 }
 
+.turn-thinking {
+  margin-top: 0.45rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 10px;
+  border: 1px dashed #bcd0d5;
+  background: #f4f8f9;
+}
+
+.turn-thinking h4 {
+  margin: 0 0 0.35rem;
+}
+
+.turn-thinking p {
+  margin: 0;
+  color: #2f4d55;
+  white-space: pre-wrap;
+}
+
 .provider-grid {
   display: flex;
   flex-wrap: wrap;

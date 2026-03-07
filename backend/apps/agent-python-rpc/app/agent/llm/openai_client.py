@@ -17,5 +17,5 @@ class OpenAIClient(BaseChatClient):
         # Reserved implementation for future integration.
         return bool(self.api_key.strip())
 
-    def chat_completion(self, messages: Sequence[dict], model: str, temperature: float) -> str:
+    def chat_completion(self, messages: Sequence[dict], model: str, temperature: float, think_mode: bool = False) -> str:
         raise RuntimeError("openai provider is reserved but not implemented yet")

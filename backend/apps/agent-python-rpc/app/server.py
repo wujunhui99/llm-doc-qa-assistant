@@ -179,7 +179,9 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
             },
         ]
 
-    def _prepare_generation(self, request: qa_pb2.GenerateAnswerRequest) -> tuple[str, BaseChatClient, str, str, List[dict], int]:
+    def _prepare_generation(
+        self, request: qa_pb2.GenerateAnswerRequest
+    ) -> tuple[str, BaseChatClient, str, str, List[dict], int, bool]:
         provider = (request.active_provider or "").strip().lower() or self.cfg.default_provider
         resolved_provider, client = self._resolve_client(provider)
         if not client.available():
@@ -197,7 +199,8 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
         question = (request.question or "").strip()
         selected_contexts = self._select_contexts(question, list(request.contexts))
         messages = self._build_messages(scope_type, prev_q, prev_a, question, selected_contexts)
-        return resolved_provider, client, model, scope_type, messages, len(selected_contexts)
+        think_mode = bool(request.think_mode)
+        return resolved_provider, client, model, scope_type, messages, len(selected_contexts), think_mode
 
     def _abort_llm_error(self, context: grpc.ServicerContext, exc: Exception) -> None:
         msg = str(exc).lower()
@@ -207,13 +210,20 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
 
     def GenerateAnswer(self, request: qa_pb2.GenerateAnswerRequest, context: grpc.ServicerContext) -> qa_pb2.GenerateAnswerReply:
         try:
-            resolved_provider, client, model, scope_type, messages, context_count = self._prepare_generation(request)
+            resolved_provider, client, model, scope_type, messages, context_count, think_mode = self._prepare_generation(request)
         except Exception as exc:
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"LLM provider routing error: {exc}")
 
         try:
-            self.logger.info("generate answer route provider=%s model=%s scope=%s contexts=%d", resolved_provider, model, scope_type, context_count)
-            answer = client.chat_completion(messages, model=model, temperature=self.cfg.temperature)
+            self.logger.info(
+                "generate answer route provider=%s model=%s scope=%s contexts=%d think_mode=%s",
+                resolved_provider,
+                model,
+                scope_type,
+                context_count,
+                think_mode,
+            )
+            answer = client.chat_completion(messages, model=model, temperature=self.cfg.temperature, think_mode=think_mode)
         except Exception as exc:
             self._abort_llm_error(context, exc)
 
@@ -221,30 +231,52 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
 
     def StreamGenerateAnswer(self, request: qa_pb2.GenerateAnswerRequest, context: grpc.ServicerContext):
         try:
-            resolved_provider, client, model, scope_type, messages, context_count = self._prepare_generation(request)
+            resolved_provider, client, model, scope_type, messages, context_count, think_mode = self._prepare_generation(request)
         except Exception as exc:
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"LLM provider routing error: {exc}")
 
         try:
             self.logger.info(
-                "stream generate answer route provider=%s model=%s scope=%s contexts=%d",
+                "stream generate answer route provider=%s model=%s scope=%s contexts=%d think_mode=%s",
                 resolved_provider,
                 model,
                 scope_type,
                 context_count,
+                think_mode,
             )
             chunks: List[str] = []
-            for delta in client.chat_completion_stream(messages, model=model, temperature=self.cfg.temperature):
-                piece = str(delta or "")
-                if not piece:
+            for stream_chunk in client.chat_completion_stream(
+                messages, model=model, temperature=self.cfg.temperature, think_mode=think_mode
+            ):
+                piece = ""
+                thinking_piece = ""
+                if isinstance(stream_chunk, str):
+                    piece = stream_chunk
+                elif isinstance(stream_chunk, dict):
+                    piece = str((stream_chunk or {}).get("delta") or "")
+                    thinking_piece = str((stream_chunk or {}).get("thinking_delta") or "")
+                elif stream_chunk is not None:
+                    piece = str(stream_chunk)
+                if not piece and not thinking_piece:
                     continue
-                chunks.append(piece)
-                yield qa_pb2.GenerateAnswerChunk(delta=piece, answer="".join(chunks), done=False)
+                if piece:
+                    chunks.append(piece)
+                yield qa_pb2.GenerateAnswerChunk(
+                    delta=piece,
+                    answer="".join(chunks),
+                    done=False,
+                    thinking_delta=thinking_piece,
+                )
 
             answer = "".join(chunks).strip()
             if not answer:
                 raise RuntimeError("LLM provider returned empty answer")
-            yield qa_pb2.GenerateAnswerChunk(delta="", answer=answer, done=True)
+            yield qa_pb2.GenerateAnswerChunk(
+                delta="",
+                answer=answer,
+                done=True,
+                thinking_delta="",
+            )
         except Exception as exc:
             self._abort_llm_error(context, exc)
 

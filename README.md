@@ -77,16 +77,23 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 {
   "message": "hi",
   "scope_type": "all",
-  "scope_doc_ids": []
+  "scope_doc_ids": [],
+  "think_mode": false
 }
 ```
 - Event order:
   - `message`: normalized question/scope payload.
   - `retrieval`: citation candidates.
+  - `thinking`: incremental reasoning text chunks (only when `think_mode=true` and provider emits thinking).
   - `delta`: incremental answer tokens/chunks (multiple events).
   - `final`: final answer + citations.
   - `done`: stream finished.
   - `error`: stream-side failure.
+
+- Event payload snippets:
+  - `thinking`: `{"payload":{"delta":"..."}}`
+  - `delta`: `{"payload":{"delta":"..."}}`
+  - `final`: `{"payload":{"answer":"...","citations":[...]}}`
 
 Example:
 ```bash
@@ -94,5 +101,5 @@ curl -N -X POST "http://localhost:8080/api/threads/<thread_id>/turns/stream" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
-  --data '{"message":"请用一句话介绍你自己","scope_type":"all","scope_doc_ids":[]}'
+  --data '{"message":"请用一句话介绍你自己","scope_type":"all","scope_doc_ids":[],"think_mode":true}'
 ```

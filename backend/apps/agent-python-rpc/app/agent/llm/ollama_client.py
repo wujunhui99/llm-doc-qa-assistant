@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-from typing import Iterator, Sequence
+from typing import Dict, Iterator, Sequence
 
 import requests
 from requests import Response
@@ -37,7 +37,7 @@ class OllamaClient(BaseChatClient):
             stream=stream,
         )
 
-    def chat_completion(self, messages: Sequence[dict], model: str, temperature: float) -> str:
+    def chat_completion(self, messages: Sequence[dict], model: str, temperature: float, think_mode: bool = False) -> str:
         if not self.available():
             raise RuntimeError("OLLAMA_API_BASE is empty")
 
@@ -45,6 +45,7 @@ class OllamaClient(BaseChatClient):
             "model": model,
             "messages": list(messages),
             "stream": False,
+            "think": bool(think_mode),
             "keep_alive": "10m",
             "options": {"temperature": float(temperature)},
         }
@@ -82,7 +83,7 @@ class OllamaClient(BaseChatClient):
             raise RuntimeError("ollama chat completion returned empty answer")
         return content
 
-    def _stream_chat_once(self, payload: dict, timeout: int) -> Iterator[str]:
+    def _stream_chat_once(self, payload: dict, timeout: int) -> Iterator[Dict[str, str]]:
         resp = self._post_chat(payload, timeout=timeout, stream=True)
         try:
             if resp.status_code < 200 or resp.status_code >= 300:
@@ -99,14 +100,19 @@ class OllamaClient(BaseChatClient):
                     raise RuntimeError("ollama chat stream returned invalid response body")
 
                 delta = str(((data.get("message") or {}).get("content") or ""))
-                if delta:
-                    yield delta
+                thinking_delta = str(
+                    ((data.get("message") or {}).get("thinking") or data.get("thinking") or "")
+                )
+                if delta or thinking_delta:
+                    yield {"delta": delta, "thinking_delta": thinking_delta}
                 if bool(data.get("done")):
                     break
         finally:
             resp.close()
 
-    def chat_completion_stream(self, messages: Sequence[dict], model: str, temperature: float) -> Iterator[str]:
+    def chat_completion_stream(
+        self, messages: Sequence[dict], model: str, temperature: float, think_mode: bool = False
+    ) -> Iterator[Dict[str, str]]:
         if not self.available():
             raise RuntimeError("OLLAMA_API_BASE is empty")
 
@@ -114,6 +120,7 @@ class OllamaClient(BaseChatClient):
             "model": model,
             "messages": list(messages),
             "stream": True,
+            "think": bool(think_mode),
             "keep_alive": "10m",
             "options": {"temperature": float(temperature)},
         }
@@ -124,9 +131,9 @@ class OllamaClient(BaseChatClient):
         for idx, current_timeout in enumerate(timeouts):
             emitted = False
             try:
-                for delta in self._stream_chat_once(payload, current_timeout):
+                for chunk in self._stream_chat_once(payload, current_timeout):
                     emitted = True
-                    yield delta
+                    yield chunk
                 if emitted:
                     return
                 raise RuntimeError("ollama chat completion returned empty answer")

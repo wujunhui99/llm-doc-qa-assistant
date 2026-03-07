@@ -18,6 +18,20 @@ class OllamaClientTestCase(unittest.TestCase):
         self.assertTrue(mock_post.called)
         kwargs = mock_post.call_args.kwargs
         self.assertEqual(kwargs["timeout"], 15)
+        self.assertEqual(kwargs["json"]["think"], False)
+
+    def test_chat_completion_sends_think_mode_flag(self) -> None:
+        client = OllamaClient(api_base="http://127.0.0.1:11434", timeout_seconds=15)
+        fake_resp = Mock()
+        fake_resp.status_code = 200
+        fake_resp.json.return_value = {"message": {"content": "ok"}}
+        with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp) as mock_post:
+            out = client.chat_completion(
+                [{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2, think_mode=True
+            )
+        self.assertEqual(out, "ok")
+        kwargs = mock_post.call_args.kwargs
+        self.assertEqual(kwargs["json"]["think"], True)
 
     def test_chat_completion_strips_api_base_before_request(self) -> None:
         client = OllamaClient(api_base="  http://127.0.0.1:11434/  ", timeout_seconds=15)
@@ -78,7 +92,50 @@ class OllamaClientTestCase(unittest.TestCase):
         ]
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp):
             chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2))
-        self.assertEqual(chunks, ["你", "好"])
+        self.assertEqual(
+            chunks,
+            [
+                {"delta": "你", "thinking_delta": ""},
+                {"delta": "好", "thinking_delta": ""},
+            ],
+        )
+
+    def test_chat_completion_stream_emits_thinking_chunks(self) -> None:
+        client = OllamaClient(api_base="http://127.0.0.1:11434", timeout_seconds=30)
+        fake_resp = Mock()
+        fake_resp.status_code = 200
+        fake_resp.iter_lines.return_value = [
+            '{"message":{"thinking":"先分析一下"}}',
+            '{"message":{"content":"答案"}}',
+            '{"done":true}',
+        ]
+        with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp):
+            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2))
+        self.assertEqual(
+            chunks,
+            [
+                {"delta": "", "thinking_delta": "先分析一下"},
+                {"delta": "答案", "thinking_delta": ""},
+            ],
+        )
+
+    def test_chat_completion_stream_sends_think_mode_flag(self) -> None:
+        client = OllamaClient(api_base="http://127.0.0.1:11434", timeout_seconds=30)
+        fake_resp = Mock()
+        fake_resp.status_code = 200
+        fake_resp.iter_lines.return_value = [
+            '{"message":{"content":"ok"}}',
+            '{"done":true}',
+        ]
+        with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp) as mock_post:
+            chunks = list(
+                client.chat_completion_stream(
+                    [{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2, think_mode=True
+                )
+            )
+        self.assertEqual(chunks, [{"delta": "ok", "thinking_delta": ""}])
+        kwargs = mock_post.call_args.kwargs
+        self.assertEqual(kwargs["json"]["think"], True)
 
     def test_chat_completion_stream_retries_once_on_read_timeout(self) -> None:
         client = OllamaClient(api_base="http://127.0.0.1:11434", timeout_seconds=30)
@@ -93,7 +150,7 @@ class OllamaClientTestCase(unittest.TestCase):
             side_effect=[requests.exceptions.ReadTimeout("timeout"), fake_resp],
         ) as mock_post:
             chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2))
-        self.assertEqual(chunks, ["ok"])
+        self.assertEqual(chunks, [{"delta": "ok", "thinking_delta": ""}])
         self.assertEqual(mock_post.call_count, 2)
         first_call = mock_post.call_args_list[0]
         second_call = mock_post.call_args_list[1]

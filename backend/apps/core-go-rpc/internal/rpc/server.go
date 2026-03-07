@@ -56,6 +56,7 @@ type LLMGenerateRequest struct {
 	Question             string
 	ScopeType            string
 	ScopeDocIDs          []string
+	ThinkMode            bool
 	Contexts             []LLMContextChunk
 	PreviousTurnQuestion string
 	PreviousTurnAnswer   string
@@ -64,7 +65,7 @@ type LLMGenerateRequest struct {
 
 type LLMService interface {
 	GenerateAnswer(ctx context.Context, req LLMGenerateRequest) (string, error)
-	GenerateAnswerStream(ctx context.Context, req LLMGenerateRequest, onDelta func(string) error) (string, error)
+	GenerateAnswerStream(ctx context.Context, req LLMGenerateRequest, onChunk func(delta string, thinkingDelta string) error) (string, error)
 	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
 	ExtractDocumentText(ctx context.Context, filename, mimeType string, content []byte) (string, error)
 }
@@ -480,7 +481,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	}
 
 	activeProvider := s.store.GetProvider().ActiveProvider
-	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, nil)
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, req.GetThinkMode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -495,6 +496,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 				"question":      turn.Question,
 				"scope_type":    turn.ScopeType,
 				"scope_doc_ids": turn.ScopeDocIDs,
+				"think_mode":    req.GetThinkMode(),
 			},
 			CreatedAt: now,
 		},
@@ -620,6 +622,7 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 			"question":      turn.Question,
 			"scope_type":    turn.ScopeType,
 			"scope_doc_ids": turn.ScopeDocIDs,
+			"think_mode":    req.GetThinkMode(),
 		},
 		CreatedAt: now,
 	}
@@ -643,9 +646,23 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 
 	streamItems := []types.TurnItem{messageItem, retrievalItem}
 	activeProvider := s.store.GetProvider().ActiveProvider
-	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, func(delta string) error {
-		piece := delta
-		if piece == "" {
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, req.GetThinkMode(), func(delta string, thinkingDelta string) error {
+		if strings.TrimSpace(thinkingDelta) != "" {
+			item := types.TurnItem{
+				ID:       types.NewID("item"),
+				TurnID:   turn.ID,
+				ItemType: "thinking",
+				Payload: map[string]interface{}{
+					"delta": thinkingDelta,
+				},
+				CreatedAt: time.Now().UTC(),
+			}
+			streamItems = append(streamItems, item)
+			if err := stream.Send(toProtoTurnItem(item)); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(delta) == "" {
 			return nil
 		}
 		item := types.TurnItem{
@@ -653,7 +670,7 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 			TurnID:   turn.ID,
 			ItemType: "delta",
 			Payload: map[string]interface{}{
-				"delta": piece,
+				"delta": delta,
 			},
 			CreatedAt: time.Now().UTC(),
 		}
@@ -799,7 +816,8 @@ func (s *Server) generateAnswer(
 	retrieved []qa.ScoredChunk,
 	previousTurns []types.Turn,
 	activeProvider string,
-	onDelta func(string) error,
+	thinkMode bool,
+	onChunk func(delta string, thinkingDelta string) error,
 ) (string, error) {
 	if s.llmService == nil {
 		return "", status.Error(codes.FailedPrecondition, "LLM service is not configured")
@@ -824,6 +842,7 @@ func (s *Server) generateAnswer(
 		Question:       turn.Question,
 		ScopeType:      turn.ScopeType,
 		ScopeDocIDs:    append([]string(nil), turn.ScopeDocIDs...),
+		ThinkMode:      thinkMode,
 		Contexts:       contexts,
 		ActiveProvider: strings.TrimSpace(activeProvider),
 	}
@@ -835,8 +854,8 @@ func (s *Server) generateAnswer(
 
 	var answer string
 	var err error
-	if onDelta != nil {
-		answer, err = s.llmService.GenerateAnswerStream(ctx, llmReq, onDelta)
+	if onChunk != nil {
+		answer, err = s.llmService.GenerateAnswerStream(ctx, llmReq, onChunk)
 	} else {
 		answer, err = s.llmService.GenerateAnswer(ctx, llmReq)
 	}

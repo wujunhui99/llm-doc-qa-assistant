@@ -89,7 +89,7 @@ func (s *Server) handleCreateTurn(w http.ResponseWriter, r *http.Request, thread
 		return
 	}
 
-	resp, err := s.threadLogic.CreateTurn(r.Context(), token, threadID, req.Message, req.ScopeType, req.ScopeDocIDs)
+	resp, err := s.threadLogic.CreateTurn(r.Context(), token, threadID, req.Message, req.ScopeType, req.ScopeDocIDs, req.ThinkMode)
 	if err != nil {
 		writeGRPCError(w, err)
 		return
@@ -163,7 +163,7 @@ func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	coreStream, err := s.threadLogic.CreateTurnStream(r.Context(), token, threadID, req.Message, req.ScopeType, req.ScopeDocIDs)
+	coreStream, err := s.threadLogic.CreateTurnStream(r.Context(), token, threadID, req.Message, req.ScopeType, req.ScopeDocIDs, req.ThinkMode)
 	if err != nil {
 		writeGRPCError(w, err)
 		return

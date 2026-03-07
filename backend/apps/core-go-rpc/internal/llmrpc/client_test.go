@@ -123,6 +123,9 @@ func TestClientGenerateAnswerMapsFields(t *testing.T) {
 			if in.GetActiveProvider() != "siliconflow" {
 				t.Fatalf("unexpected provider: %s", in.GetActiveProvider())
 			}
+			if !in.GetThinkMode() {
+				t.Fatalf("expected think mode true")
+			}
 			if len(in.GetContexts()) != 1 || in.GetContexts()[0].GetChunkId() != "chk_1" {
 				t.Fatalf("unexpected contexts: %+v", in.GetContexts())
 			}
@@ -137,6 +140,7 @@ func TestClientGenerateAnswerMapsFields(t *testing.T) {
 		Question:       "项目概述",
 		ScopeType:      "doc",
 		ScopeDocIDs:    []string{"doc_1"},
+		ThinkMode:      true,
 		ActiveProvider: "siliconflow",
 		Contexts: []corerpc.LLMContextChunk{
 			{DocID: "doc_1", DocName: "doc.md", ChunkID: "chk_1", ChunkIndex: 0, Content: "项目概述段落"},
@@ -167,8 +171,12 @@ func TestClientGenerateAnswerStream(t *testing.T) {
 			if in.GetActiveProvider() != "ollama" {
 				t.Fatalf("unexpected provider: %s", in.GetActiveProvider())
 			}
+			if !in.GetThinkMode() {
+				t.Fatalf("expected think mode true")
+			}
 			return &fakeStreamGenerateClient{
 				chunks: []*qav1.GenerateAnswerChunk{
+					{ThinkingDelta: "思考", Done: false},
 					{Delta: "你", Done: false},
 					{Delta: "好", Done: false},
 					{Answer: "你好", Done: true},
@@ -178,10 +186,13 @@ func TestClientGenerateAnswerStream(t *testing.T) {
 	})
 
 	var got string
+	var gotThinking string
 	out, err := c.GenerateAnswerStream(context.Background(), corerpc.LLMGenerateRequest{
 		ActiveProvider: "ollama",
-	}, func(delta string) error {
+		ThinkMode:      true,
+	}, func(delta string, thinkingDelta string) error {
 		got += delta
+		gotThinking += thinkingDelta
 		return nil
 	})
 	if err != nil {
@@ -192,6 +203,9 @@ func TestClientGenerateAnswerStream(t *testing.T) {
 	}
 	if got != "你好" {
 		t.Fatalf("unexpected streamed delta: %q", got)
+	}
+	if gotThinking != "思考" {
+		t.Fatalf("unexpected streamed thinking: %q", gotThinking)
 	}
 }
 

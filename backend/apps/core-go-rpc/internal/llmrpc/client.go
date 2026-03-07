@@ -44,6 +44,7 @@ func (c *Client) GenerateAnswer(ctx context.Context, req corerpc.LLMGenerateRequ
 		Question:             req.Question,
 		ScopeType:            req.ScopeType,
 		ScopeDocIds:          append([]string(nil), req.ScopeDocIDs...),
+		ThinkMode:            req.ThinkMode,
 		Contexts:             contexts,
 		PreviousTurnQuestion: req.PreviousTurnQuestion,
 		PreviousTurnAnswer:   req.PreviousTurnAnswer,
@@ -63,7 +64,11 @@ func (c *Client) GenerateAnswer(ctx context.Context, req corerpc.LLMGenerateRequ
 	return answer, nil
 }
 
-func (c *Client) GenerateAnswerStream(ctx context.Context, req corerpc.LLMGenerateRequest, onDelta func(string) error) (string, error) {
+func (c *Client) GenerateAnswerStream(
+	ctx context.Context,
+	req corerpc.LLMGenerateRequest,
+	onChunk func(delta string, thinkingDelta string) error,
+) (string, error) {
 	if c == nil || c.raw == nil {
 		return "", fmt.Errorf("llm rpc client is not configured")
 	}
@@ -87,6 +92,7 @@ func (c *Client) GenerateAnswerStream(ctx context.Context, req corerpc.LLMGenera
 		Question:             req.Question,
 		ScopeType:            req.ScopeType,
 		ScopeDocIds:          append([]string(nil), req.ScopeDocIDs...),
+		ThinkMode:            req.ThinkMode,
 		Contexts:             contexts,
 		PreviousTurnQuestion: req.PreviousTurnQuestion,
 		PreviousTurnAnswer:   req.PreviousTurnAnswer,
@@ -113,12 +119,13 @@ func (c *Client) GenerateAnswerStream(ctx context.Context, req corerpc.LLMGenera
 			return "", recvErr
 		}
 		delta := chunk.GetDelta()
+		thinkingDelta := chunk.GetThinkingDelta()
 		if delta != "" {
 			builder.WriteString(delta)
-			if onDelta != nil {
-				if cbErr := onDelta(delta); cbErr != nil {
-					return "", cbErr
-				}
+		}
+		if onChunk != nil && (delta != "" || thinkingDelta != "") {
+			if cbErr := onChunk(delta, thinkingDelta); cbErr != nil {
+				return "", cbErr
 			}
 		}
 		if chunk.GetDone() {

@@ -11,6 +11,8 @@
   - thread creation/switching,
   - query composer,
   - scope controls (`@all` / `@doc`),
+  - think mode toggle (`think_mode`, default off),
+  - SSE streaming render (`message` / `retrieval` / `thinking` / `delta` / `final` / `done`),
   - citation list rendering.
 - System Configuration page:
   - provider list,
@@ -37,6 +39,9 @@
 - Scope UX:
   - `all`: global owned-doc retrieval,
   - `doc`: explicit checkbox selection for owned docs.
+- Think UX:
+  - default off,
+  - when enabled, frontend renders streamed `thinking` text before/f alongside answer `delta`.
 - Mobile + desktop supported by responsive CSS rules.
 
 ## Quality Notes

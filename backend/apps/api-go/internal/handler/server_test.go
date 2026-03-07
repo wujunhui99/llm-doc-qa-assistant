@@ -299,6 +299,45 @@ func TestDownloadDocumentSetsHeadersAndBody(t *testing.T) {
 	}
 }
 
+func TestCreateTurnForwardsThinkMode(t *testing.T) {
+	core := &mockCoreClient{
+		createTurnFn: func(_ context.Context, in *qav1.CreateTurnRequest, _ ...grpc.CallOption) (*qav1.CreateTurnReply, error) {
+			if in.GetThreadId() != "th_1" {
+				t.Fatalf("expected thread th_1, got %s", in.GetThreadId())
+			}
+			if !in.GetThinkMode() {
+				t.Fatalf("expected think_mode true")
+			}
+			return &qav1.CreateTurnReply{
+				Turn: &qav1.Turn{
+					Id:        "turn_1",
+					ThreadId:  "th_1",
+					Question:  in.GetMessage(),
+					Answer:    "ok",
+					ScopeType: in.GetScopeType(),
+				},
+			}, nil
+		},
+	}
+	srv := NewServer(core, log.New(io.Discard, "", 0))
+	h := srv.Routes()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/threads/th_1/turns", strings.NewReader(`{
+		"message":"hi",
+		"scope_type":"all",
+		"scope_doc_ids":[],
+		"think_mode":true
+	}`))
+	req.Header.Set("Authorization", "Bearer token-123")
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
 func decodeBody(t *testing.T, payload []byte) map[string]interface{} {
 	t.Helper()
 	var out map[string]interface{}

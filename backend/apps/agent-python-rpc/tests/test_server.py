@@ -15,18 +15,22 @@ class _DummyContext:
 class _FakeClient:
     def __init__(self):
         self.last_messages = None
+        self.last_think_mode = None
 
     def available(self) -> bool:
         return True
 
-    def chat_completion(self, messages, model, temperature):
+    def chat_completion(self, messages, model, temperature, think_mode=False):
         self.last_messages = messages
+        self.last_think_mode = think_mode
         return "项目概述：智能文档问答助手支持文档上传、检索与多轮问答。"
 
-    def chat_completion_stream(self, messages, model, temperature):
+    def chat_completion_stream(self, messages, model, temperature, think_mode=False):
         self.last_messages = messages
-        yield "项目概述："
-        yield "智能文档问答助手支持文档上传、检索与多轮问答。"
+        self.last_think_mode = think_mode
+        yield {"delta": "", "thinking_delta": "先分析用户问题"}
+        yield {"delta": "项目概述：", "thinking_delta": ""}
+        yield {"delta": "智能文档问答助手支持文档上传、检索与多轮问答。", "thinking_delta": ""}
 
 class _FakeEmbeddingClient:
     def available(self) -> bool:
@@ -113,6 +117,7 @@ class LlmServiceTestCase(unittest.TestCase):
         user_content = svc._fake_client.last_messages[1]["content"]
         self.assertIn("[1]", user_content)
         self.assertIn("这是项目概述段落", user_content)
+        self.assertEqual(svc._fake_client.last_think_mode, False)
 
     def test_generate_answer_requires_api_key(self) -> None:
         cfg = Config(
@@ -166,6 +171,7 @@ class LlmServiceTestCase(unittest.TestCase):
                 qa_pb2.GenerateAnswerRequest(
                     question="项目概述是什么",
                     active_provider="siliconflow",
+                    think_mode=True,
                 ),
                 _DummyContext(),
             )
@@ -173,6 +179,7 @@ class LlmServiceTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 2)
         self.assertEqual(chunks[-1].done, True)
         self.assertIn("项目概述", chunks[-1].answer)
+        self.assertEqual(svc._fake_client.last_think_mode, True)
 
 
 if __name__ == "__main__":

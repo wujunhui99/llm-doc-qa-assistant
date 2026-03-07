@@ -25,7 +25,7 @@ import (
 
 type fakeLLMService struct {
 	generateAnswerFn func(ctx context.Context, in LLMGenerateRequest) (string, error)
-	streamAnswerFn   func(ctx context.Context, in LLMGenerateRequest, onDelta func(string) error) (string, error)
+	streamAnswerFn   func(ctx context.Context, in LLMGenerateRequest, onChunk func(delta string, thinkingDelta string) error) (string, error)
 	embedTextsFn     func(ctx context.Context, texts []string) ([][]float32, error)
 	extractTextFn    func(ctx context.Context, filename, mimeType string, content []byte) (string, error)
 }
@@ -37,17 +37,17 @@ func (m *fakeLLMService) GenerateAnswer(ctx context.Context, in LLMGenerateReque
 	return "mock answer", nil
 }
 
-func (m *fakeLLMService) GenerateAnswerStream(ctx context.Context, in LLMGenerateRequest, onDelta func(string) error) (string, error) {
+func (m *fakeLLMService) GenerateAnswerStream(ctx context.Context, in LLMGenerateRequest, onChunk func(delta string, thinkingDelta string) error) (string, error) {
 	if m.streamAnswerFn != nil {
-		return m.streamAnswerFn(ctx, in, onDelta)
+		return m.streamAnswerFn(ctx, in, onChunk)
 	}
 	if m.generateAnswerFn != nil {
 		answer, err := m.generateAnswerFn(ctx, in)
 		if err != nil {
 			return "", err
 		}
-		if onDelta != nil && answer != "" {
-			if cbErr := onDelta(answer); cbErr != nil {
+		if onChunk != nil && answer != "" {
+			if cbErr := onChunk(answer, ""); cbErr != nil {
 				return "", cbErr
 			}
 		}
@@ -221,6 +221,9 @@ func TestGenerateAnswerUsesLLMRPC(t *testing.T) {
 			if in.ActiveProvider != "openai" {
 				t.Fatalf("expected active provider openai, got %s", in.ActiveProvider)
 			}
+			if !in.ThinkMode {
+				t.Fatalf("expected think mode true")
+			}
 			if len(in.Contexts) != 1 || in.Contexts[0].ChunkID != "chk_1" {
 				t.Fatalf("unexpected contexts: %+v", in.Contexts)
 			}
@@ -243,7 +246,7 @@ func TestGenerateAnswerUsesLLMRPC(t *testing.T) {
 	turn := types.Turn{ID: "turn_1", ThreadID: "th_1", Question: "q", ScopeType: "all"}
 	prev := []types.Turn{{Question: "prev q", Answer: "prev a"}}
 
-	answer, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, prev, "openai", nil)
+	answer, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, prev, "openai", true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +276,7 @@ func TestGenerateAnswerReturnsUnavailableOnLLMError(t *testing.T) {
 	}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
-	_, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, nil, "", nil)
+	_, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, nil, "", false, nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -286,7 +289,7 @@ func TestGenerateAnswerReturnsFailedPreconditionWhenLLMNil(t *testing.T) {
 	s := &Server{llmService: nil, logger: log.New(io.Discard, "", 0)}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
-	_, err := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "", nil)
+	_, err := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "", false, nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -383,6 +386,9 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 			callCount++
 			switch callCount {
 			case 1:
+				if !in.ThinkMode {
+					t.Fatalf("expected think mode true on first turn")
+				}
 				if len(in.Contexts) == 0 {
 					t.Fatalf("expected rag contexts for first turn")
 				}
@@ -395,6 +401,9 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 				}
 				return "根据合同证据，项目延期2周。", nil
 			case 2:
+				if in.ThinkMode {
+					t.Fatalf("expected think mode false on second turn")
+				}
 				if strings.TrimSpace(in.PreviousTurnQuestion) == "" || strings.TrimSpace(in.PreviousTurnAnswer) == "" {
 					t.Fatalf("expected previous turn context on second turn")
 				}
@@ -419,6 +428,7 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 		Message:     "项目延期多久？",
 		ScopeType:   "doc",
 		ScopeDocIds: []string{doc.ID},
+		ThinkMode:   true,
 	})
 	if err != nil {
 		t.Fatalf("create turn1 failed: %v", err)
