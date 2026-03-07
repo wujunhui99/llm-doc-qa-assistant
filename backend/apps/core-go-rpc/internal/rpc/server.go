@@ -468,6 +468,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	})
 
 	now := time.Now().UTC()
+	effectiveThinkMode := false
 	turn := types.Turn{
 		ID:          types.NewID("turn"),
 		ThreadID:    thread.ID,
@@ -481,7 +482,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	}
 
 	activeProvider := s.store.GetProvider().ActiveProvider
-	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, req.GetThinkMode(), nil)
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, effectiveThinkMode, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +497,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 				"question":      turn.Question,
 				"scope_type":    turn.ScopeType,
 				"scope_doc_ids": turn.ScopeDocIDs,
-				"think_mode":    req.GetThinkMode(),
+				"think_mode":    effectiveThinkMode,
 			},
 			CreatedAt: now,
 		},
@@ -602,6 +603,7 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 	})
 
 	now := time.Now().UTC()
+	effectiveThinkMode := false
 	turn := types.Turn{
 		ID:          types.NewID("turn"),
 		ThreadID:    thread.ID,
@@ -622,7 +624,7 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 			"question":      turn.Question,
 			"scope_type":    turn.ScopeType,
 			"scope_doc_ids": turn.ScopeDocIDs,
-			"think_mode":    req.GetThinkMode(),
+			"think_mode":    effectiveThinkMode,
 		},
 		CreatedAt: now,
 	}
@@ -646,22 +648,8 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 
 	streamItems := []types.TurnItem{messageItem, retrievalItem}
 	activeProvider := s.store.GetProvider().ActiveProvider
-	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, req.GetThinkMode(), func(delta string, thinkingDelta string) error {
-		if strings.TrimSpace(thinkingDelta) != "" {
-			item := types.TurnItem{
-				ID:       types.NewID("item"),
-				TurnID:   turn.ID,
-				ItemType: "thinking",
-				Payload: map[string]interface{}{
-					"delta": thinkingDelta,
-				},
-				CreatedAt: time.Now().UTC(),
-			}
-			streamItems = append(streamItems, item)
-			if err := stream.Send(toProtoTurnItem(item)); err != nil {
-				return err
-			}
-		}
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, effectiveThinkMode, func(delta string, thinkingDelta string) error {
+		_ = thinkingDelta
 		if strings.TrimSpace(delta) == "" {
 			return nil
 		}

@@ -148,7 +148,12 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
             return [
                 {
                     "role": "system",
-                    "content": "你是严谨的文档问答助手。只能根据给定证据回答，不允许编造。回答中尽量引用证据编号[1][2]...，并保持中文表达清晰连贯。",
+                    "content": (
+                        "你是严谨的文档问答助手。只能根据给定证据回答，不允许编造。"
+                        "回答中尽量引用证据编号[1][2]...。"
+                        "回答应准确、简洁，优先给结论；除非用户明确要求，不要展开冗长分析。"
+                        "禁止输出思考过程、推理步骤或过程化措辞（例如“首先/其次/分析如下”），只输出最终答复。"
+                    ),
                 },
                 {
                     "role": "user",
@@ -165,7 +170,12 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
         return [
             {
                 "role": "system",
-                "content": "你是文档问答助手。当前没有检索到任何文档证据。你可以进行简短通用对话，但要明确说明回答不基于文档证据。",
+                "content": (
+                    "你是文档问答助手。当前没有检索到任何文档证据。"
+                    "你可以进行简短通用对话，但要明确说明回答不基于文档证据。"
+                    "回答应准确、简洁，优先给结论；除非用户明确要求，不要展开冗长分析。"
+                    "禁止输出思考过程、推理步骤或过程化措辞（例如“首先/其次/分析如下”），只输出最终答复。"
+                ),
             },
             {
                 "role": "user",
@@ -199,7 +209,8 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
         question = (request.question or "").strip()
         selected_contexts = self._select_contexts(question, list(request.contexts))
         messages = self._build_messages(scope_type, prev_q, prev_a, question, selected_contexts)
-        think_mode = bool(request.think_mode)
+        # Reasoning mode is globally disabled for stable short outputs.
+        think_mode = False
         return resolved_provider, client, model, scope_type, messages, len(selected_contexts), think_mode
 
     def _abort_llm_error(self, context: grpc.ServicerContext, exc: Exception) -> None:

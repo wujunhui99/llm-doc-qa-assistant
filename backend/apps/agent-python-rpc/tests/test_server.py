@@ -179,7 +179,7 @@ class LlmServiceTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(chunks), 2)
         self.assertEqual(chunks[-1].done, True)
         self.assertIn("项目概述", chunks[-1].answer)
-        self.assertEqual(svc._fake_client.last_think_mode, True)
+        self.assertEqual(svc._fake_client.last_think_mode, False)
 
 
 if __name__ == "__main__":

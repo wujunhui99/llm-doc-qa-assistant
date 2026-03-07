@@ -47,7 +47,10 @@ class OllamaClient(BaseChatClient):
             "stream": False,
             "think": bool(think_mode),
             "keep_alive": "10m",
-            "options": {"temperature": float(temperature)},
+            "options": {
+                "temperature": float(temperature),
+                "num_predict": 2048,
+            },
         }
         timeout = self._timeout_seconds()
         try:
@@ -83,7 +86,7 @@ class OllamaClient(BaseChatClient):
             raise RuntimeError("ollama chat completion returned empty answer")
         return content
 
-    def _stream_chat_once(self, payload: dict, timeout: int) -> Iterator[Dict[str, str]]:
+    def _stream_chat_once(self, payload: dict, timeout: int, include_thinking: bool) -> Iterator[Dict[str, str]]:
         resp = self._post_chat(payload, timeout=timeout, stream=True)
         try:
             if resp.status_code < 200 or resp.status_code >= 300:
@@ -100,9 +103,11 @@ class OllamaClient(BaseChatClient):
                     raise RuntimeError("ollama chat stream returned invalid response body")
 
                 delta = str(((data.get("message") or {}).get("content") or ""))
-                thinking_delta = str(
-                    ((data.get("message") or {}).get("thinking") or data.get("thinking") or "")
-                )
+                thinking_delta = ""
+                if include_thinking:
+                    thinking_delta = str(
+                        ((data.get("message") or {}).get("thinking") or data.get("thinking") or "")
+                    )
                 if delta or thinking_delta:
                     yield {"delta": delta, "thinking_delta": thinking_delta}
                 if bool(data.get("done")):
@@ -122,7 +127,10 @@ class OllamaClient(BaseChatClient):
             "stream": True,
             "think": bool(think_mode),
             "keep_alive": "10m",
-            "options": {"temperature": float(temperature)},
+            "options": {
+                "temperature": float(temperature),
+                "num_predict": 2048,
+            },
         }
         timeout = self._timeout_seconds()
         timeouts = [timeout, max(timeout * 2, 180)]
@@ -131,7 +139,7 @@ class OllamaClient(BaseChatClient):
         for idx, current_timeout in enumerate(timeouts):
             emitted = False
             try:
-                for chunk in self._stream_chat_once(payload, current_timeout):
+                for chunk in self._stream_chat_once(payload, current_timeout, include_thinking=bool(think_mode)):
                     emitted = True
                     yield chunk
                 if emitted:

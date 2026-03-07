@@ -28,10 +28,12 @@ class ConfigTestCase(unittest.TestCase):
         env = {
             "SILICONFLOW_TIMEOUT_SECONDS": "30",
             "OLLAMA_TIMEOUT_SECONDS": "",
+            "OLLAMA_CHAT_MODEL": "",
         }
         with patch.dict(os.environ, env, clear=False):
             cfg = Config.load()
         self.assertEqual(cfg.ollama_timeout_seconds, 15)
+        self.assertEqual(cfg.provider_chat_models.get("ollama"), "qwen3.5:latest")
 
 
 if __name__ == "__main__":

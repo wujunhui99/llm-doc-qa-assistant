@@ -386,8 +386,8 @@ func TestCreateTurnRAGAgentDialogueWithGeneratedDocument(t *testing.T) {
 			callCount++
 			switch callCount {
 			case 1:
-				if !in.ThinkMode {
-					t.Fatalf("expected think mode true on first turn")
+				if in.ThinkMode {
+					t.Fatalf("expected think mode false on first turn")
 				}
 				if len(in.Contexts) == 0 {
 					t.Fatalf("expected rag contexts for first turn")

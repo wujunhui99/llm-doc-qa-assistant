@@ -299,14 +299,14 @@ func TestDownloadDocumentSetsHeadersAndBody(t *testing.T) {
 	}
 }
 
-func TestCreateTurnForwardsThinkMode(t *testing.T) {
+func TestCreateTurnForcesThinkModeDisabled(t *testing.T) {
 	core := &mockCoreClient{
 		createTurnFn: func(_ context.Context, in *qav1.CreateTurnRequest, _ ...grpc.CallOption) (*qav1.CreateTurnReply, error) {
 			if in.GetThreadId() != "th_1" {
 				t.Fatalf("expected thread th_1, got %s", in.GetThreadId())
 			}
-			if !in.GetThinkMode() {
-				t.Fatalf("expected think_mode true")
+			if in.GetThinkMode() {
+				t.Fatalf("expected think_mode false")
 			}
 			return &qav1.CreateTurnReply{
 				Turn: &qav1.Turn{

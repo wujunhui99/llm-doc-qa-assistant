@@ -29,6 +29,7 @@ func (l *ThreadLogic) CreateThread(ctx context.Context, token, title string) (*q
 }
 
 func (l *ThreadLogic) CreateTurn(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string, thinkMode bool) (*qav1.CreateTurnReply, error) {
+	_ = thinkMode
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	return l.svcCtx.Core.CreateTurn(ctx, &qav1.CreateTurnRequest{
@@ -37,18 +38,19 @@ func (l *ThreadLogic) CreateTurn(ctx context.Context, token, threadID, message, 
 		Message:     message,
 		ScopeType:   scopeType,
 		ScopeDocIds: scopeDocIDs,
-		ThinkMode:   thinkMode,
+		ThinkMode:   false,
 	})
 }
 
 func (l *ThreadLogic) CreateTurnStream(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string, thinkMode bool) (qav1.CoreService_CreateTurnStreamClient, error) {
+	_ = thinkMode
 	return l.svcCtx.Core.CreateTurnStream(ctx, &qav1.CreateTurnRequest{
 		Token:       token,
 		ThreadId:    threadID,
 		Message:     message,
 		ScopeType:   scopeType,
 		ScopeDocIds: scopeDocIDs,
-		ThinkMode:   thinkMode,
+		ThinkMode:   false,
 	})
 }
 

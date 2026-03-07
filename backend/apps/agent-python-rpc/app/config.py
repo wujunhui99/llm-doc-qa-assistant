@@ -49,7 +49,7 @@ class Config:
         load_dotenv(service_root / ".env")
 
         default_model = os.getenv("SILICONFLOW_CHAT_MODEL", "Pro/MiniMaxAI/MiniMax-M2.5").strip() or "Pro/MiniMaxAI/MiniMax-M2.5"
-        ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:4b").strip() or "qwen3:4b"
+        ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", "qwen3.5:latest").strip() or "qwen3.5:latest"
         provider_models = {
             "siliconflow": default_model,
             "mock": default_model,

@@ -13,7 +13,7 @@ class OllamaClientTestCase(unittest.TestCase):
         fake_resp.status_code = 200
         fake_resp.json.return_value = {"message": {"content": "你好，我是 ollama"}}
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp) as mock_post:
-            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2)
+            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2)
         self.assertIn("ollama", out)
         self.assertTrue(mock_post.called)
         kwargs = mock_post.call_args.kwargs
@@ -27,7 +27,7 @@ class OllamaClientTestCase(unittest.TestCase):
         fake_resp.json.return_value = {"message": {"content": "ok"}}
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp) as mock_post:
             out = client.chat_completion(
-                [{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2, think_mode=True
+                [{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2, think_mode=True
             )
         self.assertEqual(out, "ok")
         kwargs = mock_post.call_args.kwargs
@@ -39,7 +39,7 @@ class OllamaClientTestCase(unittest.TestCase):
         fake_resp.status_code = 200
         fake_resp.json.return_value = {"message": {"content": "ok"}}
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp) as mock_post:
-            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2)
+            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2)
         self.assertEqual(out, "ok")
         self.assertTrue(mock_post.called)
         args, _ = mock_post.call_args
@@ -51,7 +51,7 @@ class OllamaClientTestCase(unittest.TestCase):
         fake_resp.status_code = 200
         fake_resp.json.return_value = {"message": {"content": 12345}}
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp):
-            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2)
+            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2)
         self.assertEqual(out, "12345")
 
     def test_chat_completion_invalid_json_raises_runtime_error(self) -> None:
@@ -61,7 +61,7 @@ class OllamaClientTestCase(unittest.TestCase):
         fake_resp.json.side_effect = ValueError("invalid json")
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp):
             with self.assertRaises(RuntimeError) as cm:
-                client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2)
+                client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2)
         self.assertIn("invalid json", str(cm.exception).lower())
 
     def test_chat_completion_retries_once_on_read_timeout(self) -> None:
@@ -73,7 +73,7 @@ class OllamaClientTestCase(unittest.TestCase):
             "app.agent.llm.ollama_client.requests.post",
             side_effect=[requests.exceptions.ReadTimeout("timeout"), fake_resp],
         ) as mock_post:
-            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2)
+            out = client.chat_completion([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2)
         self.assertEqual(out, "重试成功")
         self.assertEqual(mock_post.call_count, 2)
         first_call = mock_post.call_args_list[0]
@@ -91,7 +91,7 @@ class OllamaClientTestCase(unittest.TestCase):
             '{"done":true}',
         ]
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp):
-            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2))
+            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2))
         self.assertEqual(
             chunks,
             [
@@ -100,7 +100,7 @@ class OllamaClientTestCase(unittest.TestCase):
             ],
         )
 
-    def test_chat_completion_stream_emits_thinking_chunks(self) -> None:
+    def test_chat_completion_stream_ignores_thinking_chunks_when_think_mode_off(self) -> None:
         client = OllamaClient(api_base="http://127.0.0.1:11434", timeout_seconds=30)
         fake_resp = Mock()
         fake_resp.status_code = 200
@@ -110,11 +110,10 @@ class OllamaClientTestCase(unittest.TestCase):
             '{"done":true}',
         ]
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp):
-            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2))
+            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2))
         self.assertEqual(
             chunks,
             [
-                {"delta": "", "thinking_delta": "先分析一下"},
                 {"delta": "答案", "thinking_delta": ""},
             ],
         )
@@ -130,7 +129,7 @@ class OllamaClientTestCase(unittest.TestCase):
         with patch("app.agent.llm.ollama_client.requests.post", return_value=fake_resp) as mock_post:
             chunks = list(
                 client.chat_completion_stream(
-                    [{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2, think_mode=True
+                    [{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2, think_mode=True
                 )
             )
         self.assertEqual(chunks, [{"delta": "ok", "thinking_delta": ""}])
@@ -149,7 +148,7 @@ class OllamaClientTestCase(unittest.TestCase):
             "app.agent.llm.ollama_client.requests.post",
             side_effect=[requests.exceptions.ReadTimeout("timeout"), fake_resp],
         ) as mock_post:
-            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3:4b", temperature=0.2))
+            chunks = list(client.chat_completion_stream([{"role": "user", "content": "你好"}], model="qwen3.5:latest", temperature=0.2))
         self.assertEqual(chunks, [{"delta": "ok", "thinking_delta": ""}])
         self.assertEqual(mock_post.call_count, 2)
         first_call = mock_post.call_args_list[0]

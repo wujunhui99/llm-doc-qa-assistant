@@ -31,12 +31,11 @@
   - `CreateTurnStream` (CoreService server-streaming, emits `TurnItem`)
   - `StreamGenerateAnswer` (LlmService server-streaming, emits `GenerateAnswerChunk`)
     - `GenerateAnswerChunk.delta`: answer token/chunk
-    - `GenerateAnswerChunk.thinking_delta`: reasoning token/chunk (optional, think mode)
+    - `GenerateAnswerChunk.thinking_delta`: reserved field (current runtime disables reasoning mode)
 
 ## SSE mapping (`api-go`)
 - `TurnItem.item_type=message` -> `event: message`
 - `TurnItem.item_type=retrieval` -> `event: retrieval`
-- `TurnItem.item_type=thinking` -> `event: thinking`
 - `TurnItem.item_type=delta` -> `event: delta`
 - `TurnItem.item_type=final` -> `event: final`
 

@@ -6,7 +6,6 @@ export function QAPage({ token }) {
   const [threads, setThreads] = useState([])
   const [activeThreadId, setActiveThreadId] = useState('')
   const [scopeType, setScopeType] = useState('all')
-  const [thinkMode, setThinkMode] = useState(false)
   const [docIDs, setDocIDs] = useState([])
   const [message, setMessage] = useState('')
   const [turns, setTurns] = useState([])
@@ -70,8 +69,7 @@ export function QAPage({ token }) {
     const payload = {
       message,
       scope_type: scopeType,
-      scope_doc_ids: scopeType === 'doc' ? docIDs : [],
-      think_mode: thinkMode
+      scope_doc_ids: scopeType === 'doc' ? docIDs : []
     }
 
     setLoading(true)
@@ -82,12 +80,10 @@ export function QAPage({ token }) {
           id: `local_${Date.now()}`,
           question: message.trim(),
           answer: '',
-          scope_type: scopeType,
-          think_mode: thinkMode
+          scope_type: scopeType
         },
         citations: [],
-        items: [],
-        thinking: ''
+        items: []
       }
       let streamError = ''
       setStreamingTurn(draft)
@@ -112,11 +108,6 @@ export function QAPage({ token }) {
           if (delta) {
             draft.turn.answer = `${draft.turn.answer}${delta}`
           }
-        } else if (event === 'thinking') {
-          const thinkingDelta = payloadObj.delta || ''
-          if (thinkingDelta) {
-            draft.thinking = `${draft.thinking}${thinkingDelta}`
-          }
         } else if (event === 'final') {
           draft.turn.answer = payloadObj.answer || draft.turn.answer
           draft.citations = Array.isArray(payloadObj.citations) ? payloadObj.citations : draft.citations
@@ -124,8 +115,7 @@ export function QAPage({ token }) {
         setStreamingTurn({
           ...draft,
           turn: { ...draft.turn },
-          citations: [...draft.citations],
-          thinking: draft.thinking
+          citations: [...draft.citations]
         })
       })
 
@@ -138,8 +128,7 @@ export function QAPage({ token }) {
           ...draft,
           turn: { ...draft.turn },
           citations: [...draft.citations],
-          items: [],
-          thinking: draft.thinking
+          items: []
         },
         ...prev
       ])
@@ -175,15 +164,6 @@ export function QAPage({ token }) {
             <option value="all">@all</option>
             <option value="doc">@doc</option>
           </select>
-        </label>
-
-        <label>
-          <input
-            type="checkbox"
-            checked={thinkMode}
-            onChange={(e) => setThinkMode(e.target.checked)}
-          />
-          {' '}Think 模式（深度推理）
         </label>
 
         {scopeType === 'doc' ? (
@@ -223,12 +203,6 @@ export function QAPage({ token }) {
               <span className="status status-ready">streaming</span>
             </div>
             <p className="turn-answer">{streamingTurn.turn.answer || '...'}</p>
-            {streamingTurn.turn.think_mode ? (
-              <div className="turn-thinking">
-                <h4>思考过程</h4>
-                <p>{streamingTurn.thinking || '...'}</p>
-              </div>
-            ) : null}
 
             <h4>Citations</h4>
             {streamingTurn.citations?.length ? (
@@ -251,12 +225,6 @@ export function QAPage({ token }) {
               <span className="status status-ready">{entry.turn.scope_type}</span>
             </div>
             <p className="turn-answer">{entry.turn.answer}</p>
-            {entry.turn.think_mode && entry.thinking ? (
-              <div className="turn-thinking">
-                <h4>思考过程</h4>
-                <p>{entry.thinking}</p>
-              </div>
-            ) : null}
 
             <h4>Citations</h4>
             {entry.citations?.length ? (
