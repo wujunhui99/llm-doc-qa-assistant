@@ -34,6 +34,7 @@
 - Deploy workflow authenticates to the target host using SSH private key from secret (`DEPLOY_SSH_KEY`), with host key pinning via `ssh-keyscan`.
 - Container registry authentication uses `GHCR_TOKEN` at runtime; no secret is hardcoded in workflow YAML.
 - Workflow permissions are minimal-by-default (`contents: read`, plus `packages: write` only for image publish workflow).
+- Manual deploy image tag input affects image selection only; authentication still relies on GHCR token and SSH key secrets.
 - Post-deploy health checks are mandatory and deployment fails on health check timeout/failure.
 - Deploy workflow validates repository-side compose artifacts before remote execution, reducing mis-deploy risk from stale or mismatched image references.
 - Deploy target path baseline is `/home/ubuntu/code/project/llm-doc-qa-assistant` (`$APP_DIR`), avoiding cross-project path reuse.

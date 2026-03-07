@@ -34,6 +34,7 @@
 - Docker build cache (`type=gha`) is enabled to reduce rebuild latency and timeout risk.
 - `deploy.yml` runs only on successful Docker build for `main` (or manual dispatch), with deploy concurrency control enabled.
 - Deploy workflow validates repository-side `deploy/compose/docker-compose.yml` before SSH deploy, preventing image-name/tag drift.
+- Deploy supports manual image tag selection and falls back to `main` when non-`main` tag pull fails.
 - Deploy uses mandatory post-deploy health checks for `http://localhost:8080` and `http://localhost:8080/api/config`; failed checks fail the deployment.
 - Deploy workflow app root is standardized to `/home/ubuntu/code/project/llm-doc-qa-assistant` to keep rollout target aligned with this repository.
 

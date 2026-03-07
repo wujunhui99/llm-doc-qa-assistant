@@ -6,6 +6,11 @@ on:
     branches: [main]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Image tag to deploy (optional). If empty, manual deploy defaults to 'main'.
+        required: false
+        type: string
 
 concurrency:
   group: deploy-main
@@ -99,16 +104,23 @@ jobs:
 
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
             target_sha="${{ github.event.workflow_run.head_sha }}"
+            short_sha="${target_sha:0:12}"
+            image_tag="sha-${short_sha}"
           else
             target_sha="${{ github.sha }}"
+            manual_tag="$(echo "${{ github.event.inputs.image_tag || '' }}" | xargs)"
+            if [[ -n "${manual_tag}" ]]; then
+              image_tag="${manual_tag}"
+            else
+              image_tag="main"
+            fi
           fi
-          short_sha="${target_sha:0:12}"
 
           echo "TARGET_SHA=${target_sha}" >> "$GITHUB_ENV"
-          echo "IMAGE_TAG=sha-${short_sha}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${image_tag}" >> "$GITHUB_ENV"
 
           echo "Deploy target SHA: ${target_sha}"
-          echo "Deploy image tag: sha-${short_sha}"
+          echo "Deploy image tag: ${image_tag}"
 
       - name: Configure SSH key
         shell: bash
@@ -170,7 +182,15 @@ jobs:
             exit 1
           fi
 
-          ${COMPOSE} pull
+          if ! ${COMPOSE} pull; then
+            if [[ "${IMAGE_TAG}" != "main" ]]; then
+              echo "Compose pull failed for IMAGE_TAG=${IMAGE_TAG}, fallback to IMAGE_TAG=main"
+              export IMAGE_TAG=main
+              ${COMPOSE} pull
+            else
+              exit 1
+            fi
+          fi
           ${COMPOSE} up -d --remove-orphans
 
           check_http() {

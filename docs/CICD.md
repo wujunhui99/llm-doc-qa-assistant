@@ -47,6 +47,7 @@ Trigger:
 Required behavior:
 - Deploy via SSH.
 - Pull latest images and recreate services via Compose.
+- Manual dispatch can choose `image_tag`; if omitted, deploy defaults to `main`.
 - Run post-deploy health checks.
 - Fail deployment if health checks fail.
 - This workflow is deployment-only and does not run code test suites.
@@ -74,6 +75,10 @@ The following implementation defaults are required unless this document is updat
 - Deploy health check status policy:
   - `http://localhost:8080` must return `200`.
   - `http://localhost:8080/api/config` is accepted as `200` or `401` (auth-protected endpoint reachability check).
+- Deploy image tag policy:
+  - `workflow_run` deploy uses `sha-<short>` from triggering build commit.
+  - Manual deploy uses input `image_tag`; if empty, defaults to `main`.
+  - If pull with non-`main` tag fails, deploy falls back to `main`.
 
 ## CD Server Profile (Canonical)
 The generated `deploy.yml` must use this deployment target profile unless this document is updated.
