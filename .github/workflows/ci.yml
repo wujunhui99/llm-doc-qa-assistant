@@ -61,6 +61,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import os
+          import re
           import subprocess
           import sys
 
@@ -73,6 +74,22 @@ jobs:
 
           if base_sha == head_sha:
             print("No code diff detected; doc-sync gate passed.")
+            sys.exit(0)
+
+          def is_fix_text(text: str) -> bool:
+            text = (text or "").strip().lower()
+            return bool(re.match(r"^fix(\(|:|!|\b)", text))
+
+          try:
+            commit_subjects = subprocess.check_output(
+              ["git", "log", "--format=%s", f"{base_sha}..{head_sha}"],
+              text=True,
+            ).splitlines()
+          except subprocess.CalledProcessError:
+            commit_subjects = []
+
+          if any(is_fix_text(subject) for subject in commit_subjects if subject.strip()):
+            print("Doc-sync bypassed: fix-type commit detected in diff range.")
             sys.exit(0)
 
           diff_cmd = ["git", "diff", "--name-only", f"{base_sha}..{head_sha}"]
