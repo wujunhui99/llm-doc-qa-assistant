@@ -24,6 +24,7 @@ class ConfigTestCase(unittest.TestCase):
         self.assertEqual(cfg.max_context_chunks, 9)
         self.assertIn("ollama", cfg.provider_chat_models)
         self.assertEqual(cfg.provider_chat_models.get("openai"), "gpt-4o")
+        self.assertEqual(cfg.provider_chat_models.get("claude"), "claude-3-5-haiku-latest")
         self.assertEqual(cfg.ollama_timeout_seconds, 210)
 
     def test_load_default_ollama_timeout(self) -> None:

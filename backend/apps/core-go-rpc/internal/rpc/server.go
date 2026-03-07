@@ -65,9 +65,10 @@ type LLMGenerateRequest struct {
 }
 
 type retrievalDecision struct {
-	Mode         string
-	UseRetrieval bool
-	Reason       string
+	Mode           string
+	UseRetrieval   bool
+	Reason         string
+	RetrievalQuery string
 }
 
 type LLMService interface {
@@ -468,8 +469,12 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	decision := s.decideRetrieval(ctx, user.ID, thread.ID, scope, retrievalMode, selectedDocs, previousTurns, activeProvider)
 
 	var retrieved []qa.ScoredChunk
+	retrievalQuery := strings.TrimSpace(decision.RetrievalQuery)
+	if retrievalQuery == "" {
+		retrievalQuery = scope.QuestionBody
+	}
 	if decision.UseRetrieval {
-		retrieved = s.retrieveForScope(ctx, user.ID, scope.QuestionBody, selectedDocs, topKChunks)
+		retrieved = s.retrieveForScope(ctx, user.ID, retrievalQuery, selectedDocs, topKChunks)
 	}
 	citations := buildCitations(retrieved)
 
@@ -514,6 +519,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 				"mode":               decision.Mode,
 				"use_retrieval":      decision.UseRetrieval,
 				"reason":             decision.Reason,
+				"retrieval_query":    retrievalQuery,
 				"scope_type":         turn.ScopeType,
 				"scope_doc_ids":      turn.ScopeDocIDs,
 				"selected_doc_count": len(selectedDocs),
@@ -615,8 +621,12 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 	decision := s.decideRetrieval(ctx, user.ID, thread.ID, scope, retrievalMode, selectedDocs, previousTurns, activeProvider)
 
 	var retrieved []qa.ScoredChunk
+	retrievalQuery := strings.TrimSpace(decision.RetrievalQuery)
+	if retrievalQuery == "" {
+		retrievalQuery = scope.QuestionBody
+	}
 	if decision.UseRetrieval {
-		retrieved = s.retrieveForScope(ctx, user.ID, scope.QuestionBody, selectedDocs, topKChunks)
+		retrieved = s.retrieveForScope(ctx, user.ID, retrievalQuery, selectedDocs, topKChunks)
 	}
 	citations := buildCitations(retrieved)
 
@@ -658,6 +668,7 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 			"mode":               decision.Mode,
 			"use_retrieval":      decision.UseRetrieval,
 			"reason":             decision.Reason,
+			"retrieval_query":    retrievalQuery,
 			"scope_type":         turn.ScopeType,
 			"scope_doc_ids":      turn.ScopeDocIDs,
 			"selected_doc_count": len(selectedDocs),
@@ -961,9 +972,10 @@ func (s *Server) decideRetrieval(
 	}
 	if len(selectedDocs) == 0 {
 		return retrievalDecision{
-			Mode:         mode,
-			UseRetrieval: false,
-			Reason:       "no documents available in current scope",
+			Mode:           mode,
+			UseRetrieval:   false,
+			Reason:         "no documents available in current scope",
+			RetrievalQuery: scope.QuestionBody,
 		}
 	}
 	if mode == "force" {
@@ -972,32 +984,40 @@ func (s *Server) decideRetrieval(
 			reason = "explicit @doc selection"
 		}
 		return retrievalDecision{
-			Mode:         mode,
-			UseRetrieval: true,
-			Reason:       reason,
+			Mode:           mode,
+			UseRetrieval:   true,
+			Reason:         reason,
+			RetrievalQuery: scope.QuestionBody,
 		}
 	}
 
 	if use, decided, reason := ruleBasedRetrievalDecision(scope.QuestionBody); decided {
 		return retrievalDecision{
-			Mode:         "auto",
-			UseRetrieval: use,
-			Reason:       reason,
+			Mode:           "auto",
+			UseRetrieval:   use,
+			Reason:         reason,
+			RetrievalQuery: scope.QuestionBody,
 		}
 	}
 
-	if use, reason, ok := s.llmDecideRetrieval(ctx, ownerID, threadID, scope, previousTurns, activeProvider); ok {
+	if use, reason, retrievalQuery, ok := s.llmDecideRetrieval(ctx, ownerID, threadID, scope, previousTurns, activeProvider); ok {
+		query := strings.TrimSpace(retrievalQuery)
+		if query == "" {
+			query = scope.QuestionBody
+		}
 		return retrievalDecision{
-			Mode:         "auto",
-			UseRetrieval: use,
-			Reason:       reason,
+			Mode:           "auto",
+			UseRetrieval:   use,
+			Reason:         reason,
+			RetrievalQuery: query,
 		}
 	}
 
 	return retrievalDecision{
-		Mode:         "auto",
-		UseRetrieval: true,
-		Reason:       "auto fallback: uncertain, retrieval enabled",
+		Mode:           "auto",
+		UseRetrieval:   true,
+		Reason:         "auto fallback: uncertain, retrieval enabled",
+		RetrievalQuery: scope.QuestionBody,
 	}
 }
 
@@ -1041,24 +1061,17 @@ func (s *Server) llmDecideRetrieval(
 	scope qa.Scope,
 	previousTurns []types.Turn,
 	activeProvider string,
-) (useRetrieval bool, reason string, ok bool) {
+) (useRetrieval bool, reason string, retrievalQuery string, ok bool) {
 	if s.llmService == nil {
-		return false, "llm unavailable for decision", false
+		return false, "llm unavailable for decision", "", false
 	}
-
-	judgePrompt := strings.TrimSpace(
-		"你是检索路由器。判断用户问题是否需要先检索其已上传文档再回答。\n" +
-			"仅输出一行 JSON，格式必须是：{\"use_retrieval\":true|false,\"reason\":\"简短原因\"}。\n" +
-			"不要输出其他任何文字。\n" +
-			"用户问题：" + scope.QuestionBody,
-	)
 
 	req := LLMGenerateRequest{
 		OwnerUserID:    ownerID,
 		ThreadID:       threadID,
 		TurnID:         types.NewID("route"),
-		Question:       judgePrompt,
-		ScopeType:      scope.Type,
+		Question:       scope.QuestionBody,
+		ScopeType:      "route",
 		ScopeDocIDs:    append([]string(nil), scope.DocIDs...),
 		ThinkMode:      false,
 		ActiveProvider: strings.TrimSpace(activeProvider),
@@ -1072,21 +1085,26 @@ func (s *Server) llmDecideRetrieval(
 	out, err := s.llmService.GenerateAnswer(ctx, req)
 	if err != nil {
 		s.logger.Printf("llm retrieval decision warning: %v", err)
-		return false, "llm decision failed", false
+		return false, "llm decision failed", "", false
 	}
 
-	use, parsedReason, parsed := parseLLMRetrievalDecision(out)
+	use, parsedReason, parsedQuery, parsed := parseLLMRetrievalDecision(out)
 	if !parsed {
 		s.logger.Printf("llm retrieval decision parse warning: output=%q", truncate(out, 200))
-		return false, "llm output undecidable", false
+		return false, "llm output undecidable", "", false
 	}
-	return use, "llm: " + parsedReason, true
+	return use, "llm: " + parsedReason, parsedQuery, true
 }
 
-func parseLLMRetrievalDecision(raw string) (useRetrieval bool, reason string, ok bool) {
+func parseLLMRetrievalDecision(raw string) (useRetrieval bool, reason string, retrievalQuery string, ok bool) {
 	type llmDecision struct {
-		UseRetrieval bool   `json:"use_retrieval"`
-		Reason       string `json:"reason"`
+		UseRetrieval   bool   `json:"use_retrieval"`
+		Reason         string `json:"reason"`
+		RetrievalQuery string `json:"retrieval_query"`
+		Tool           string `json:"tool"`
+		Arguments      struct {
+			Query string `json:"query"`
+		} `json:"arguments"`
 	}
 
 	text := strings.TrimSpace(raw)
@@ -1099,24 +1117,31 @@ func parseLLMRetrievalDecision(raw string) (useRetrieval bool, reason string, ok
 			if r == "" {
 				r = "json decision"
 			}
-			return out.UseRetrieval, r, true
+			query := strings.TrimSpace(out.RetrievalQuery)
+			if query == "" {
+				query = strings.TrimSpace(out.Arguments.Query)
+			}
+			if !out.UseRetrieval && strings.EqualFold(strings.TrimSpace(out.Tool), "retrieval") {
+				out.UseRetrieval = true
+			}
+			return out.UseRetrieval, r, query, true
 		}
 	}
 
 	lower := strings.ToLower(text)
 	if strings.Contains(lower, "不需要检索") || strings.Contains(lower, "skip retrieval") || strings.Contains(lower, "use_retrieval\":false") {
-		return false, "text decision", true
+		return false, "text decision", "", true
 	}
 	if strings.Contains(lower, "需要检索") || strings.Contains(lower, "use retrieval") || strings.Contains(lower, "use_retrieval\":true") {
-		return true, "text decision", true
+		return true, "text decision", "", true
 	}
 	if strings.Contains(lower, "yes") || strings.Contains(lower, "true") {
-		return true, "text decision", true
+		return true, "text decision", "", true
 	}
 	if strings.Contains(lower, "no") || strings.Contains(lower, "false") {
-		return false, "text decision", true
+		return false, "text decision", "", true
 	}
-	return false, "", false
+	return false, "", "", false
 }
 
 func (s *Server) authenticate(ctx context.Context, token string) (domainauth.User, error) {

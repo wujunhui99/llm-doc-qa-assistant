@@ -18,6 +18,7 @@
 - LLM boundary:
   - `agent-python-rpc` does not perform tenant authorization.
   - Core sends only scoped/authorized context to Python service.
+  - Provider credentials (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SILICONFLOW_API_KEY`) are read from runtime env and used only inside Python provider adapters (LiteLLM).
 - Vector isolation:
   - `core-go-rpc` applies owner filter for Qdrant search.
   - Returned vector hits are filtered by selected scope doc ids before answer generation.

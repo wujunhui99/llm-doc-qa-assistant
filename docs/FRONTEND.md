@@ -9,7 +9,7 @@
   - delete with confirmation.
 - Agent QA page:
   - thread creation/switching,
-  - query composer,
+  - query composer (`@` trigger does not require leading whitespace),
   - inline `@` doc mention picker (inserts `@doc(...)` tokens),
   - automatic retrieval mode (`auto`) when no explicit `@doc` mention is provided,
   - SSE streaming render (`message` / `retrieval_decision` / `retrieval` / `delta` / `final` / `done`),
@@ -40,7 +40,7 @@
   - no mention: send turn with `scope_type=auto` and let backend decide retrieval,
   - with `@doc(...)` mention: send `scope_type=doc` + selected `scope_doc_ids` (forced scoped retrieval).
 - Streaming UX:
-  - show retrieval-decision note per turn from `retrieval_decision` event payload (`use_retrieval`, `reason`).
+  - show retrieval-decision note per turn from `retrieval_decision` event payload (`use_retrieval`, `reason`, `retrieval_query`).
 - Mobile + desktop supported by responsive CSS rules.
 - Deployed frontend defaults to same-origin API calls (`/api/*`) instead of hardcoded `localhost`, so cross-device access works.
 

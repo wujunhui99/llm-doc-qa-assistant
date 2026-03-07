@@ -96,7 +96,7 @@ export function QAPage({ token }) {
   const syncMentionTarget = (nextMessage, cursorPos) => {
     const cursor = typeof cursorPos === 'number' ? cursorPos : nextMessage.length
     const before = nextMessage.slice(0, cursor)
-    const match = before.match(/(?:^|\s)@([^\s@()]*)$/)
+    const match = before.match(/@([^\s@()]*)$/)
     if (!match) {
       if (mentionTarget !== null) setMentionTarget(null)
       return

@@ -5,7 +5,8 @@
 - Multi-turn Continuity Score
 - Retrieval Relevance@K
 - Vector Retrieval Recall@K (when vector search enabled)
-- Scope Resolution Accuracy (`@doc` / `@all`)
+- Scope Resolution Accuracy (`@doc` / `auto`)
+- Retrieval Routing Accuracy (`retrieval_decision.use_retrieval` correctness)
 - Tenant Isolation Leak Rate
 - Unit Test Pass Rate (backend/apps + core domain)
 - Worktree Boot Success Rate (agent self-test runs)
@@ -18,6 +19,7 @@
 - Grounded Answer Rate >= 85%
 - Multi-turn Continuity >= 80%
 - Scope Resolution Accuracy >= 99%
+- Retrieval Routing Accuracy >= 90%
 - Tenant Isolation Leak Rate = 0
 - Unit Test Pass Rate = 100% on changed modules
 - Worktree Boot Success Rate >= 95%

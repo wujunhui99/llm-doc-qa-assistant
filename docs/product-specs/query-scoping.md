@@ -27,10 +27,12 @@ Support user-controlled retrieval scope in QA input:
 - Resolved scope is stored on turn metadata (`scope_type`, `scope_doc_ids`).
 - `@doc` always triggers retrieval against selected owned docs only.
 - `auto` may skip retrieval for small-talk/non-doc turns.
+- In `auto` undecided cases, backend calls LLM route mode and treats retrieval as a tool (`retrieval`) with `query` arguments (function-calling when provider supports tools).
+- If route mode returns `retrieval_query`, backend uses this query as retrieval keywords for vector/lexical search.
 - Retrieval prefers vector search (Qdrant) when enabled; lexical retrieval is fallback.
 - Vector hits are filtered by owner and selected docs before answer generation.
 - Streaming path emits a `retrieval_decision` event before `retrieval`:
-  - payload fields: `mode`, `use_retrieval`, `reason`, `scope_type`, `scope_doc_ids`, `selected_doc_count`.
+  - payload fields: `mode`, `use_retrieval`, `reason`, `retrieval_query`, `scope_type`, `scope_doc_ids`, `selected_doc_count`.
 
 ## Acceptance Criteria
 - `@doc` responses only cite selected documents.

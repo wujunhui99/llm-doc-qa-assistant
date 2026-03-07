@@ -17,7 +17,7 @@ UI provides a consistent visual system across Auth, Document, QA, and Settings p
 ## UX requirements covered
 - Clear indexing/upload feedback messages.
 - Citations always visible in QA turn cards.
-- Query composer supports inline `@` mention menu for document targeting.
+- Query composer supports inline `@` mention menu for document targeting (triggered by `@` directly, no leading-space requirement).
 - QA turn card shows retrieval decision state (`used/skipped + reason`) from stream events.
 - Ownership-visible document table tied to current authenticated user.
 - Deployed app uses same-origin API route (`/api`) through frontend gateway proxy, avoiding localhost-target confusion on client devices.

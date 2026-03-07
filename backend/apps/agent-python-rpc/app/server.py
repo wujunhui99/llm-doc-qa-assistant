@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
@@ -11,6 +12,7 @@ from typing import List, Sequence
 import grpc
 
 from app.agent.llm import BaseChatClient, SiliconFlowClient, build_chat_clients
+from app.agent.tools import ROUTER_SCOPE, build_router_messages, parse_router_output, retrieval_tool_definition
 from app.config import Config
 from app.agent.rag import extract_document_text
 
@@ -219,7 +221,46 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
             context.abort(grpc.StatusCode.FAILED_PRECONDITION, f"LLM provider authentication/config error: {exc}")
         context.abort(grpc.StatusCode.UNAVAILABLE, f"LLM provider call failed: {exc}")
 
+    def _route_retrieval_decision(self, request: qa_pb2.GenerateAnswerRequest) -> str:
+        provider = (request.active_provider or "").strip().lower() or self.cfg.default_provider
+        resolved_provider, client = self._resolve_client(provider)
+        if not client.available():
+            raise RuntimeError(f"provider is not configured: {resolved_provider}")
+
+        model = (
+            self.cfg.provider_chat_models.get(provider)
+            or self.cfg.provider_chat_models.get(resolved_provider)
+            or self.cfg.chat_model
+        )
+        question = (request.question or "").strip()
+        prev_q = (request.previous_turn_question or "").strip()
+        prev_a = (request.previous_turn_answer or "").strip()
+
+        messages = build_router_messages(question, prev_q, prev_a)
+        tools = [retrieval_tool_definition()]
+        result = client.chat_completion_with_tools(
+            messages,
+            model=model,
+            temperature=self.cfg.temperature,
+            tools=tools,
+            tool_choice="auto",
+            think_mode=False,
+        )
+        content = str((result or {}).get("content") or "")
+        tool_calls = (result or {}).get("tool_calls") if isinstance(result, dict) else []
+        parsed = parse_router_output(content, tool_calls if isinstance(tool_calls, list) else [])
+        if not parsed.get("retrieval_query"):
+            parsed["retrieval_query"] = question
+        return json.dumps(parsed, ensure_ascii=False)
+
     def GenerateAnswer(self, request: qa_pb2.GenerateAnswerRequest, context: grpc.ServicerContext) -> qa_pb2.GenerateAnswerReply:
+        if _resolve_scope(request.scope_type).lower() == ROUTER_SCOPE:
+            try:
+                answer = self._route_retrieval_decision(request)
+            except Exception as exc:
+                self._abort_llm_error(context, exc)
+            return qa_pb2.GenerateAnswerReply(answer=answer)
+
         try:
             resolved_provider, client, model, scope_type, messages, context_count, think_mode = self._prepare_generation(request)
         except Exception as exc:
@@ -241,6 +282,15 @@ class LlmService(qa_pb2_grpc.LlmServiceServicer):
         return qa_pb2.GenerateAnswerReply(answer=answer)
 
     def StreamGenerateAnswer(self, request: qa_pb2.GenerateAnswerRequest, context: grpc.ServicerContext):
+        if _resolve_scope(request.scope_type).lower() == ROUTER_SCOPE:
+            try:
+                answer = self._route_retrieval_decision(request)
+            except Exception as exc:
+                self._abort_llm_error(context, exc)
+            yield qa_pb2.GenerateAnswerChunk(delta=answer, answer=answer, done=False, thinking_delta="")
+            yield qa_pb2.GenerateAnswerChunk(delta="", answer=answer, done=True, thinking_delta="")
+            return
+
         try:
             resolved_provider, client, model, scope_type, messages, context_count, think_mode = self._prepare_generation(request)
         except Exception as exc:

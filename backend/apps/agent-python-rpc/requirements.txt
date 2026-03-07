@@ -3,3 +3,4 @@ grpcio-tools>=1.75.1
 protobuf>=5.0.0
 requests>=2.31.0
 pypdf>=5.0.0
+litellm>=1.74.0

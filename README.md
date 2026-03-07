@@ -20,7 +20,7 @@ Frontend + Go/Python microservices for document QA (RAG + multi-turn agent QA).
 - `backend/proto/qa/v1/qa.proto`
 
 `agent-python-rpc` internals:
-- `app/agent/llm`: chat-only provider interface + implementations
+- `app/agent/llm`: chat provider interface + LiteLLM-based adapters
 - `app/agent/rag`: document extraction interface + implementations
 - `app/proto`: generated python gRPC stubs
 
@@ -78,10 +78,9 @@ make restart frontend
 - Default embedding model: `Qwen/Qwen3-Embedding-4B`
 - Provider adapter defaults:
   - active: `siliconflow`
-  - chat adapters: `siliconflow`, `ollama`, `openai`/`chatgpt`
-  - reserved chat adapters: `claude`
+  - chat adapters: `siliconflow`, `ollama`, `openai`/`chatgpt`, `claude`
   - embedding path: fixed to `siliconflow` pipeline (not provider-routed)
-  - ollama request timeout: `OLLAMA_TIMEOUT_SECONDS=15` (default, fail-fast)
+  - ollama request timeout: `OLLAMA_TIMEOUT_SECONDS=15` (default, timeout + single retry)
 
 ## Tests
 ```bash
