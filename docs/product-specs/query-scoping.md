@@ -32,3 +32,4 @@ Support user-controlled retrieval scope in QA input:
 - `@doc` responses only cite selected documents.
 - `@all` responses can cite any owned document but never other users' documents.
 - Invalid or unauthorized scope references return deterministic errors.
+- If model provider is unavailable, API returns explicit provider/config error instead of mock fallback text.

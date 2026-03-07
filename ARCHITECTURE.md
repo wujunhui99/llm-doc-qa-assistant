@@ -1,108 +1,80 @@
 # ARCHITECTURE.md
 
 ## 1. Goal
-Build a Smart Document QA Assistant that supports:
-- user registration/login,
-- document management with TXT/Markdown/PDF,
-- multi-turn QA with source citations,
-- per-user document isolation,
-- query scope controls (`@doc` and `@all`),
-- provider switching,
-with a Go microservice architecture.
+Smart Document QA Assistant with:
+- register/login/logout/me,
+- TXT/Markdown/PDF document lifecycle,
+- multi-turn QA with citations,
+- user-level isolation,
+- `@all` / `@doc` scope control,
+- provider-configurable LLM runtime (default SiliconFlow).
 
-## 2. Microservice Topology
+## 2. Microservice topology
 
-### Service 1: `api-go` (frontend HTTP gateway)
-Responsibilities:
-- Exposes stable external `/api/*` contract to frontend.
-- Parses HTTP request/body/multipart/SSE.
-- Performs lightweight auth header presence checks.
-- Forwards business operations to `core-go-rpc` over gRPC.
+### `api-go` (HTTP gateway)
+- External boundary for frontend.
+- Routes `/api/*` to core gRPC.
+- Default: `:8080`.
 
-Default runtime:
-- Port: `:8080`
-- Entry: `backend/apps/api-go/cmd/api`
+### `core-go-rpc` (domain service)
+- Auth/session domain logic + ownership checks.
+- Document metadata/chunk/turn/thread state management.
+- MinIO file storage + Qdrant vector orchestration.
+- Scope resolution and retrieval pipeline orchestration.
+- Calls Python `LlmService` for:
+  - embeddings (`EmbedTexts`)
+  - answer generation (`GenerateAnswer`)
+- Default: `:19090`.
 
-### Service 2: `core-go-rpc` (Go domain/rule service)
-Responsibilities:
-- Auth and session lifecycle (DDD auth module + MySQL repositories).
-- Document metadata/chunk persistence and ownership checks.
-- Document binary storage operations via MinIO.
-- Chunk vectorization + vector index write/read (Qdrant).
-- Thread/turn lifecycle, scope resolution, retrieval chunk selection.
-- Built-in LLM agent orchestration (SiliconFlow chat + fallback).
+### `llm-python-rpc` (model service)
+- Model provider integration (SiliconFlow chat/embedding).
+- Context rerank and prompt construction for answer generation.
+- Default: `127.0.0.1:51000`.
 
-Default runtime:
-- Port: `:19090`
-- Entry: `backend/apps/core-go-rpc/cmd/server`
-
-## 3. Inter-Service Contract
-
-Proto source:
-- `backend/proto/qa/v1/qa.proto`
-
-Generated stubs:
-- Go: `backend/proto/gen/go/qa/v1`
-
-Service contracts:
+## 3. Inter-service contracts
+- Proto source: `backend/proto/qa/v1/qa.proto`
 - `api-go -> core-go-rpc`: `qa.v1.CoreService`
+- `core-go-rpc -> llm-python-rpc`: `qa.v1.LlmService`
 
-## 4. Persistence Architecture
-- MySQL:
-  - `users`, `user_sessions` (implemented)
-  - document/thread/turn relational migration (planned)
-- MinIO:
-  - raw document files, object key `{owner_user_id}/{doc_id}.{ext}`
-- Qdrant:
-  - chunk vectors + payload metadata (`owner_user_id`, `doc_id`, `chunk_id`, `chunk_index`, `content`)
-- JSON local state (transitional):
-  - documents/chunks/threads/turns/provider config
+## 4. Persistence
+- MySQL: users + sessions.
+- MinIO: raw uploaded documents.
+- Qdrant: chunk vectors and payload metadata.
+- JSON state (transitional): documents/chunks/threads/turns/provider config.
 
-## 5. Runtime Turn Model (Cross-Service)
-1. Frontend sends `POST /api/threads/{thread_id}/turns` to `api-go`.
-2. `api-go` forwards request to `core-go-rpc` `CreateTurn`.
-3. `core-go-rpc` authenticates token, validates ownership + scope.
-4. `core-go-rpc` embeds question, runs vector retrieval in Qdrant, and falls back to lexical retrieval when vector path fails.
-5. `core-go-rpc` runs built-in agent answer generation (SiliconFlow chat + deterministic fallback).
-6. `core-go-rpc` persists turn/items and returns citations + answer.
-7. `api-go` returns turn JSON and can replay turn events via SSE stream endpoint.
+## 5. Turn runtime flow
+1. Frontend calls `POST /api/threads/{thread_id}/turns`.
+2. `api-go` forwards to `core-go-rpc.CreateTurn`.
+3. Core authenticates and resolves scope.
+4. Core retrieves chunks:
+  - vector retrieval preferred (Qdrant + `EmbedTexts`)
+  - lexical fallback when vector path unavailable/fails.
+5. Core calls Python `GenerateAnswer`.
+6. Core persists turn/items/citations and returns response.
 
-## 6. External API Contract (Frontend-facing)
-Base: `/api`
+## 6. Document ingestion flow
+1. Upload validation (`.txt/.md/.markdown/.pdf`, size <= 10MB).
+2. Parse and chunk text.
+3. Store raw file in MinIO.
+4. Persist metadata/chunks.
+5. If vector enabled:
+  - call Python `EmbedTexts`,
+  - upsert vectors to Qdrant.
+6. For unreadable historical PDF chunks, Core attempts on-demand reparse/rechunk/reindex before retrieval.
 
-- Auth:
-  - `POST /auth/register`
-  - `POST /auth/login`
-  - `POST /auth/logout`
-  - `GET /auth/me`
-- Documents:
-  - `POST /documents/upload`
-  - `GET /documents`
-  - `GET /documents/{id}`
-  - `GET /documents/{id}/download`
-  - `DELETE /documents/{id}?confirm=true`
-- QA:
-  - `GET /threads`
-  - `POST /threads`
-  - `POST /threads/{thread_id}/turns`
-  - `GET /threads/{thread_id}/turns/{turn_id}/stream`
-- Config:
-  - `GET /config`
-  - `PUT /config`
-  - `GET /config/health`
+## 7. Security boundaries
+- `api-go` is public-facing.
+- `core-go-rpc` and `llm-python-rpc` are internal-only.
+- Authorization and tenant boundaries are enforced in Core only.
+- Qdrant retrieval always includes owner filter and scope doc filtering.
 
-## 7. Security and Isolation Controls
-- `core-go-rpc` is policy enforcement point for tenant/ownership checks.
-- Upload allowlist is enforced server-side: `.txt`, `.md`, `.markdown`, `.pdf`.
-- Session token validation performed in `core-go-rpc` for all protected operations.
-- Vector retrieval enforces owner filter + scope doc filtering before generation.
+## 8. Reliability boundaries
+- Timeouts:
+  - HTTP -> Core gRPC,
+  - Core -> Python LLM gRPC,
+  - Core -> Qdrant.
+- LLM provider failures return explicit service error (no mock fallback answer).
+- Retrieval degrades to lexical mode when vector path fails.
 
-## 8. Reliability Controls
-- Timeouts on HTTP->gRPC, Core->SiliconFlow calls, and Core->Qdrant calls.
-- Core fallback answer path when LLM call fails.
-- Audit log for auth failures, unauthorized access, and destructive actions.
-- Stable external API maintained while internal services evolve.
-
-## 9. Migration Status
-- Target runtime is two-service topology under `backend/apps/*`.
-- Next migration step: move document/thread/turn state from JSON store to MySQL schema.
+## 9. Next migration
+- Move document/thread/turn state from JSON state to relational schema.

@@ -13,11 +13,14 @@
 ## Functional Requirements (Implemented)
 1. Upload:
 - Validate file type and size (10MB max).
-- Parse and chunk content.
+- Parse and chunk content (with Unicode normalization).
 - Persist metadata and chunk index.
 - Vectorize chunks and write vector index into Qdrant (when vector search enabled).
 - Store raw file in MinIO bucket.
 - Status lifecycle: `indexing -> ready` (or `failed` on parse error).
+
+1. Retrieval-time repair:
+- For historical PDF docs with unreadable stored chunks, system may re-parse source file and rebuild chunks/vectors on demand before answering.
 
 2. List:
 - Return only documents where `owner_user_id == current_user_id`.

@@ -1,106 +1,55 @@
 # LLM Document QA Assistant
 
-MVP implementation based on `AGENTS.md` + architecture/spec docs.
+Frontend + Go/Python microservices for document QA (RAG + multi-turn agent QA).
 
-## Stack Direction (Go Services)
+## Stack
 - Frontend: React (Vite)
-- `api-go`: frontend HTTP gateway (`/api/*`)
-- `core-go-rpc`: Go domain/rule service (auth, docs, scope, retrieval, agent answer orchestration)
+- Backend:
+  - `api-go` (`:8080`)
+  - `core-go-rpc` (`:19090`)
+  - `llm-python-rpc` (`127.0.0.1:51000`)
 - Middleware:
-  - MySQL (auth/session persistence)
-  - MinIO (document binary storage)
-  - Qdrant (vector index for RAG retrieval)
+  - MySQL
+  - MinIO
+  - Qdrant
 
-## Directory Layout (backend)
-- `backend/apps/api-go`: HTTP API gateway
-- `backend/apps/core-go-rpc`: Go core RPC + built-in LLM agent service
-- `backend/proto/qa/v1/qa.proto`: gRPC contract source
-- `backend/proto/gen/go/qa/v1`: Go generated stubs
+## Backend layout
+- `backend/apps/api-go`
+- `backend/apps/core-go-rpc`
+- `backend/apps/llm-python-rpc`
+- `backend/proto/qa/v1/qa.proto`
 
-## Middleware startup (docker-compose)
+## Start middleware
 ```bash
 docker compose up -d
 ```
 
-This starts:
-- MySQL (`127.0.0.1:3306`)
-- MinIO API (`127.0.0.1:9000`)
-- MinIO Console (`127.0.0.1:9001`)
-- Qdrant HTTP API (`127.0.0.1:6333`)
-- Qdrant gRPC (`127.0.0.1:6334`)
-
-## Run services
-
-Terminal A (Go core RPC):
-```bash
-cd backend
-go run ./apps/core-go-rpc/cmd/server
-```
-
-Enable vector retrieval + SiliconFlow chat:
-```bash
-cd backend
-VECTOR_SEARCH_ENABLED=true \
-QDRANT_ENDPOINT=http://127.0.0.1:6333 \
-SILICONFLOW_API_KEY=your_key \
-go run ./apps/core-go-rpc/cmd/server
-```
-
-Terminal B (Go API gateway):
-```bash
-cd backend
-CORE_RPC_ADDR=127.0.0.1:19090 PORT=8080 go run ./apps/api-go/cmd/api
-```
-
-Or run by one command (from repo root):
+## Start all services
 ```bash
 make start all
-make stop all
 make restart all
+make stop all
 ```
 
-Single service control:
+Single service:
 ```bash
+make restart llm
 make restart core
-make stop api
+make restart api
 make restart frontend
 ```
 
-Service aliases:
-- `core` / `core-go-rpc` / `go-rpc` (`:19090`)
-- `api` / `api-go` (`:8080`)
-- `frontend` / `fe` / `web` (`:5173`)
+## Local env defaults
+- Core -> LLM RPC: `LLM_RPC_ADDR=127.0.0.1:51000`
+- Python LLM RPC port: `LLM_RPC_PORT=51000`
+- Default chat model: `Pro/MiniMaxAI/MiniMax-M2.5`
+- Default embedding model: `Qwen/Qwen3-Embedding-4B`
 
-Optional shared env overrides:
+## Tests
 ```bash
-export MYSQL_DSN='app:app123456@tcp(127.0.0.1:3306)/llm_doc_qa?parseTime=true&charset=utf8mb4&loc=Local'
-export MINIO_ENDPOINT='127.0.0.1:9000'
-export MINIO_ACCESS_KEY='minioadmin'
-export MINIO_SECRET_KEY='minioadmin123'
-export MINIO_BUCKET='qa-documents'
-export MINIO_USE_SSL='false'
-export VECTOR_SEARCH_ENABLED='true'
-export QDRANT_ENDPOINT='http://127.0.0.1:6333'
-export QDRANT_COLLECTION='qa_chunks'
-export SILICONFLOW_API_BASE='https://api.siliconflow.cn/v1'
-export SILICONFLOW_API_KEY='replace-me'
-export SILICONFLOW_CHAT_MODEL='Pro/MiniMaxAI/MiniMax-M2.5'
-export SILICONFLOW_EMBEDDING_MODEL='Qwen/Qwen3-Embedding-4B'
+cd backend
+go test ./...
+
+cd backend/apps/llm-python-rpc
+python3 -m unittest discover -s tests -p 'test_*.py'
 ```
-
-Provider settings defaults:
-- Available: `siliconflow`, `mock`, `openai`, `claude`, `local`
-- Active by default: `siliconflow`
-
-## Frontend run
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-## External API (via `api-go`)
-- Auth: `/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/me`
-- Documents: `/api/documents/upload`, `/api/documents`, `/api/documents/{id}`, `/api/documents/{id}/download`
-- QA: `/api/threads`, `/api/threads/{thread_id}/turns`, `/api/threads/{thread_id}/turns/{turn_id}/stream`
-- Config: `/api/config`, `/api/config/health`

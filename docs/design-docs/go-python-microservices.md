@@ -1,36 +1,34 @@
-# Go Runtime Architecture (Merged LLM)
+# Go + Python Microservices
 
-## Background
-This document originally described the Go + Python split.
-As of 2026-03-06, answer generation has been merged into `core-go-rpc`.
+## Current service split
+- `api-go`:
+  - Frontend HTTP boundary (`/api/*`).
+  - Request/response shaping and auth header pass-through.
+  - Calls `core-go-rpc` only.
+- `core-go-rpc`:
+  - Domain rules: auth/session, ownership/scope, document/thread/turn state.
+  - Document storage/index orchestration (MinIO + Qdrant).
+  - Calls Python `LlmService` by gRPC for embeddings and answer generation.
+- `llm-python-rpc`:
+  - All model-facing logic (SiliconFlow chat + embeddings).
+  - Context rerank for RAG answer generation.
+  - gRPC service: `qa.v1.LlmService`.
 
-## Service boundaries (current)
-- `api-go` (Go):
-  - HTTP `/api/*` transport and response shaping.
-  - Multipart upload/SSE handling.
-  - Forwards business calls to Core gRPC.
-- `core-go-rpc` (Go):
-  - Auth/session + ownership rules.
-  - Document parse/chunk/index state updates.
-  - Thread/turn orchestration and citations.
-  - Built-in LLM agent generation (SiliconFlow chat) and fallback logic.
-  - Vector retrieval with Qdrant + lexical fallback.
-
-## Contract rules
-- Source of truth proto: `backend/proto/qa/v1/qa.proto`.
-- `api-go` only talks to `CoreService`; frontend never directly accesses core RPC port.
-- `core-go-rpc` is authoritative for scope, tenant boundaries, and answer generation.
+## Contracts
+- Source of truth: `backend/proto/qa/v1/qa.proto`.
+- `api-go -> core-go-rpc`: `qa.v1.CoreService`.
+- `core-go-rpc -> llm-python-rpc`: `qa.v1.LlmService`.
+- Added RPC methods:
+  - `EmbedTexts`
+  - `GenerateAnswer`
 
 ## Runtime defaults
 - `api-go`: `:8080`
 - `core-go-rpc`: `:19090`
+- `llm-python-rpc`: `127.0.0.1:51000`
 
-## Security notes
-- `core-go-rpc` enforces owner isolation on retrieval scope and Qdrant owner filter.
-- `core-go-rpc` does not expose internal LLM calls over public endpoints.
-
-## Rollout strategy
-1. Keep external `/api/*` behavior stable.
-2. Route all domain logic through `core-go-rpc`.
-3. Keep model-provider adapter replaceable behind Go `llm.Generator` interface.
-4. Migrate JSON state to relational schema without breaking frontend contract.
+## Notes
+- If `51000` conflicts in local env, override:
+  - `LLM_RPC_PORT` for python service
+  - `LLM_RPC_ADDR` for core service
+- Core remains policy enforcement point; Python service does not perform tenant authorization.

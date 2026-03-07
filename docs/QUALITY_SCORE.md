@@ -31,4 +31,4 @@
 - A change is not complete unless unit tests are added/updated and pass locally.
 - Minimum local verification before commit:
   - `cd backend && go test ./...`
-  - If LLM adapter logic changed: run service-level unit tests for `backend/apps/core-go-rpc/internal/llm`.
+  - `cd backend/apps/llm-python-rpc && python3 -m unittest discover -s tests -p 'test_*.py'`
