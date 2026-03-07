@@ -1,0 +1,74 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - component: api-go
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.api-go
+            image_name: llm-doc-qa-api-go
+          - component: core-go-rpc
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.core-go-rpc
+            image_name: llm-doc-qa-core-go-rpc
+          - component: agent-python-rpc
+            context: ./backend
+            dockerfile: ./backend/Dockerfile.agent-python-rpc
+            image_name: llm-doc-qa-agent-python-rpc
+          - component: frontend
+            context: ./frontend
+            dockerfile: ./frontend/Dockerfile
+            image_name: llm-doc-qa-frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ vars.GHCR_USERNAME }}/${{ matrix.image_name }}
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,prefix=sha-,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}

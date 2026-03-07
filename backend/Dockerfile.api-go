@@ -1,0 +1,23 @@
+FROM golang:1.24-bookworm AS builder
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags='-s -w' -o /out/api-go ./apps/api-go/cmd/api
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates \
+    && adduser -D -u 10001 app
+
+WORKDIR /app
+COPY --from=builder /out/api-go /app/api-go
+COPY --from=builder /src/apps/api-go/config/api.yaml /app/config/api.yaml
+
+ENV API_CONFIG_FILE=/app/config/api.yaml
+EXPOSE 8080
+USER app
+
+ENTRYPOINT ["/app/api-go"]

@@ -51,13 +51,37 @@ Required behavior:
 - Fail deployment if health checks fail.
 - This workflow is deployment-only and does not run code test suites.
 
+## Implementation Defaults (Current Repository)
+The following implementation defaults are required unless this document is updated:
+
+- Workflow files:
+  - `.github/workflows/ci.yml`
+  - `.github/workflows/docker-build.yml`
+  - `.github/workflows/deploy.yml`
+- Repository deployment artifacts:
+  - `deploy/compose/docker-compose.yml` (must reference GHCR images and `${IMAGE_TAG}` tag variable)
+  - `deploy/compose/.env.example` (server env template for compose runtime)
+- Docker build files:
+  - `backend/Dockerfile.api-go`
+  - `backend/Dockerfile.core-go-rpc`
+  - `backend/Dockerfile.agent-python-rpc`
+  - `frontend/Dockerfile`
+- GHCR image names:
+  - `ghcr.io/${{ vars.GHCR_USERNAME }}/llm-doc-qa-api-go`
+  - `ghcr.io/${{ vars.GHCR_USERNAME }}/llm-doc-qa-core-go-rpc`
+  - `ghcr.io/${{ vars.GHCR_USERNAME }}/llm-doc-qa-agent-python-rpc`
+  - `ghcr.io/${{ vars.GHCR_USERNAME }}/llm-doc-qa-frontend`
+- Deploy health check status policy:
+  - `http://localhost:8080` must return `200`.
+  - `http://localhost:8080/api/config` is accepted as `200` or `401` (auth-protected endpoint reachability check).
+
 ## CD Server Profile (Canonical)
 The generated `deploy.yml` must use this deployment target profile unless this document is updated.
 
 - SSH host: `${{ vars.DEPLOY_HOST }}`
 - SSH user: `${{ vars.DEPLOY_USER }}`
 - SSH port: `${{ vars.DEPLOY_PORT }}` or `22`
-- App directory: `/home/ubuntu/code/go_code/c2c_monitor`
+- App directory: `/home/ubuntu/code/go_code/llm-doc-qa-assistant`
 - Compose directory: `$APP_DIR/deploy/compose`
 - Health check endpoints:
   - `http://localhost:8080`

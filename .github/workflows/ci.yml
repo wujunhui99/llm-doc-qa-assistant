@@ -1,0 +1,295 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  doc-sync:
+    name: Doc Sync Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve diff range
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            head_sha="${{ github.event.pull_request.head.sha }}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            base_sha="${{ github.event.before }}"
+            head_sha="${{ github.sha }}"
+            if [[ -z "${base_sha}" || "${base_sha}" == "0000000000000000000000000000000000000000" ]]; then
+              base_sha="$(git rev-parse "${head_sha}^" 2>/dev/null || true)"
+            fi
+          else
+            head_sha="${{ github.sha }}"
+            base_sha="$(git rev-parse "${head_sha}^" 2>/dev/null || true)"
+          fi
+
+          if [[ -z "${base_sha}" ]]; then
+            base_sha="${head_sha}"
+          fi
+
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          echo "Doc-sync diff range: ${base_sha}..${head_sha}"
+
+      - name: Enforce documentation sync
+        env:
+          BASE_SHA: ${{ steps.diff.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.diff.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+
+          base_sha = os.environ["BASE_SHA"].strip()
+          head_sha = os.environ["HEAD_SHA"].strip()
+
+          if not base_sha or not head_sha:
+            print("Unable to resolve diff range for doc-sync gate.")
+            sys.exit(1)
+
+          if base_sha == head_sha:
+            print("No code diff detected; doc-sync gate passed.")
+            sys.exit(0)
+
+          diff_cmd = ["git", "diff", "--name-only", f"{base_sha}..{head_sha}"]
+          raw = subprocess.check_output(diff_cmd, text=True).splitlines()
+          changed = [line.strip() for line in raw if line.strip()]
+
+          if not changed:
+            print("No changed files in diff; doc-sync gate passed.")
+            sys.exit(0)
+
+          print("Changed files:")
+          for path in changed:
+            print(f"- {path}")
+
+          def is_doc_file(path: str) -> bool:
+            return path.startswith("docs/") or path in {
+              "ARCHITECTURE.md",
+              "README.md",
+              "AGENTS.md",
+            }
+
+          docs_changed = {path for path in changed if is_doc_file(path)}
+          non_doc = [path for path in changed if not is_doc_file(path)]
+
+          if not non_doc:
+            print("Docs-only change detected; doc-sync gate passed.")
+            sys.exit(0)
+
+          def required_docs_for(path: str) -> set[str]:
+            req: set[str] = set()
+            lower = path.lower()
+
+            if (
+              path.startswith(".github/workflows/")
+              or path.startswith("deploy/")
+              or "deploy/compose" in lower
+              or path.endswith("Dockerfile")
+              or lower.endswith(".dockerfile")
+              or "dockerfile" in path.rsplit("/", 1)[-1].lower()
+            ):
+              req.update({"docs/CICD.md", "docs/SECURITY.md", "docs/RELIABILITY.md"})
+
+            if path.startswith("backend/proto/"):
+              req.update(
+                {
+                  "ARCHITECTURE.md",
+                  "docs/design-docs/go-python-microservices.md",
+                  "docs/product-specs/*",
+                }
+              )
+
+            if path.startswith("frontend/src/"):
+              req.update({"docs/FRONTEND.md", "docs/DESIGN.md", "docs/product-specs/*"})
+
+            if any(token in lower for token in ("parser", "chunker", "retrieval", "rerank", "index")):
+              req.update({"ARCHITECTURE.md", "docs/product-specs/*", "docs/QUALITY_SCORE.md"})
+
+            if any(token in lower for token in ("auth", "security", "permission")):
+              req.update({"docs/SECURITY.md", "docs/RELIABILITY.md"})
+
+            if path.startswith("backend/apps/") and "/cmd/" in path:
+              req.update({"ARCHITECTURE.md", "README.md", "docs/RELIABILITY.md", "docs/SECURITY.md"})
+
+            return req
+
+          def requirement_satisfied(requirement: str) -> bool:
+            if requirement.endswith("/*"):
+              prefix = requirement[:-1]
+              return any(path.startswith(prefix) for path in docs_changed)
+            return requirement in docs_changed
+
+          missing: dict[str, list[str]] = {}
+          has_matrix_rule = False
+
+          for path in non_doc:
+            reqs = required_docs_for(path)
+            if not reqs:
+              continue
+            has_matrix_rule = True
+            for req in sorted(reqs):
+              if requirement_satisfied(req):
+                continue
+              missing.setdefault(req, []).append(path)
+
+          if not docs_changed:
+            print("Doc-sync failed: non-doc files changed without any documentation updates.")
+            for path in non_doc:
+              print(f"- {path}")
+            sys.exit(1)
+
+          if missing:
+            print("Doc-sync failed: missing required docs updates from sync matrix.")
+            for req, causes in sorted(missing.items()):
+              joined = ", ".join(causes)
+              print(f"- missing {req} (triggered by: {joined})")
+            sys.exit(1)
+
+          if has_matrix_rule:
+            print("Doc-sync passed: required documentation updates are present.")
+          else:
+            print("Doc-sync passed: non-doc changes included documentation updates.")
+          PY
+
+  backend-go:
+    name: Backend Go Build/Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect backend Go module
+        id: detect
+        shell: bash
+        run: |
+          if [[ -f backend/go.mod ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Detected backend/go.mod; running backend checks."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Go
+        if: steps.detect.outputs.exists == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - name: Download dependencies
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: backend
+        run: go mod download
+
+      - name: go vet
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: backend
+        run: go vet ./...
+
+      - name: go test
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: backend
+        run: go test ./...
+
+      - name: go build
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: backend
+        run: go build ./...
+
+      - name: Skip log
+        if: steps.detect.outputs.exists != 'true'
+        run: |
+          echo "Skipped backend-go: backend/go.mod not found."
+
+  frontend-react:
+    name: Frontend React Build/Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect frontend package
+        id: detect
+        shell: bash
+        run: |
+          if [[ -f frontend/package.json ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Detected frontend/package.json; running frontend checks."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.detect.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: frontend
+        run: npm ci
+
+      - name: Detect optional scripts
+        if: steps.detect.outputs.exists == 'true'
+        id: scripts
+        working-directory: frontend
+        shell: bash
+        run: |
+          node -e "const p=require('./package.json'); const s=p.scripts||{}; console.log('has_lint='+(s.lint?'true':'false')); console.log('has_test='+(s.test?'true':'false'));" >> "$GITHUB_OUTPUT"
+
+      - name: npm run lint
+        if: steps.detect.outputs.exists == 'true' && steps.scripts.outputs.has_lint == 'true'
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Skip lint log
+        if: steps.detect.outputs.exists == 'true' && steps.scripts.outputs.has_lint != 'true'
+        run: |
+          echo "Skipped frontend lint: npm script 'lint' not found."
+
+      - name: npm test
+        if: steps.detect.outputs.exists == 'true' && steps.scripts.outputs.has_test == 'true'
+        working-directory: frontend
+        run: npm test -- --runInBand
+
+      - name: Skip test log
+        if: steps.detect.outputs.exists == 'true' && steps.scripts.outputs.has_test != 'true'
+        run: |
+          echo "Skipped frontend tests: npm script 'test' not found."
+
+      - name: npm run build
+        if: steps.detect.outputs.exists == 'true'
+        working-directory: frontend
+        run: npm run build
+
+      - name: Skip log
+        if: steps.detect.outputs.exists != 'true'
+        run: |
+          echo "Skipped frontend-react: frontend/package.json not found."

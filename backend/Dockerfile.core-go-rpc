@@ -1,0 +1,23 @@
+FROM golang:1.24-bookworm AS builder
+WORKDIR /src
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags='-s -w' -o /out/core-go-rpc ./apps/core-go-rpc/cmd/server
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates \
+    && adduser -D -u 10001 app
+
+WORKDIR /app
+COPY --from=builder /out/core-go-rpc /app/core-go-rpc
+RUN mkdir -p /app/data && chown -R app:app /app
+
+ENV DATA_DIR=/app/data
+EXPOSE 19090
+USER app
+
+ENTRYPOINT ["/app/core-go-rpc"]

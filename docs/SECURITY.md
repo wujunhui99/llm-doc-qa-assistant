@@ -29,6 +29,15 @@
 - Document deletion.
 - Provider/config changes.
 
+## CI/CD Security Controls (Implemented)
+- GitHub Actions deploy path uses repository variables/secrets only (`DEPLOY_HOST`, `DEPLOY_USER`, optional `DEPLOY_PORT`, `GHCR_USERNAME`, `DEPLOY_SSH_KEY`, `GHCR_TOKEN`).
+- Deploy workflow authenticates to the target host using SSH private key from secret (`DEPLOY_SSH_KEY`), with host key pinning via `ssh-keyscan`.
+- Container registry authentication uses `GHCR_TOKEN` at runtime; no secret is hardcoded in workflow YAML.
+- Workflow permissions are minimal-by-default (`contents: read`, plus `packages: write` only for image publish workflow).
+- Post-deploy health checks are mandatory and deployment fails on health check timeout/failure.
+- Deploy workflow validates repository-side compose artifacts before remote execution, reducing mis-deploy risk from stale or mismatched image references.
+- Deploy target path baseline is `/home/ubuntu/code/go_code/llm-doc-qa-assistant` (`$APP_DIR`), avoiding cross-project path reuse.
+
 ## Remaining Security Work
 - Add outbound egress allowlist for `agent-python-rpc` provider calls.
 - Encrypt sensitive backups at rest.

@@ -1,0 +1,120 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: llm_doc_qa_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-llm_doc_qa}
+      MYSQL_USER: ${MYSQL_USER:-app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-app123456}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    container_name: llm_doc_qa_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    command: server /data --console-address ':9001'
+    volumes:
+      - minio_data:/data
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: llm_doc_qa_qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  agent-python-rpc:
+    image: ghcr.io/${GHCR_USERNAME}/llm-doc-qa-agent-python-rpc:${IMAGE_TAG:-main}
+    container_name: llm_doc_qa_agent
+    restart: unless-stopped
+    environment:
+      AGENT_RPC_HOST: 0.0.0.0
+      AGENT_RPC_PORT: 51000
+      LLM_RPC_HOST: 0.0.0.0
+      LLM_RPC_PORT: 51000
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o-mini}
+      OLLAMA_API_BASE: ${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3.5:latest}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-15}
+      SILICONFLOW_API_BASE: ${SILICONFLOW_API_BASE:-https://api.siliconflow.cn/v1}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_CHAT_MODEL: ${SILICONFLOW_CHAT_MODEL:-Pro/MiniMaxAI/MiniMax-M2.5}
+      SILICONFLOW_EMBEDDING_MODEL: ${SILICONFLOW_EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-4B}
+      SILICONFLOW_TEMPERATURE: ${SILICONFLOW_TEMPERATURE:-0.2}
+      LLM_AGENT_MAX_CONTEXT_CHUNKS: ${LLM_AGENT_MAX_CONTEXT_CHUNKS:-6}
+
+  core-go-rpc:
+    image: ghcr.io/${GHCR_USERNAME}/llm-doc-qa-core-go-rpc:${IMAGE_TAG:-main}
+    container_name: llm_doc_qa_core
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      agent-python-rpc:
+        condition: service_started
+    environment:
+      CORE_RPC_ADDR: :19090
+      AGENT_RPC_ADDR: agent-python-rpc:51000
+      DATA_DIR: /app/data
+      MYSQL_DSN: ${MYSQL_DSN:-app:app123456@tcp(mysql:3306)/llm_doc_qa?parseTime=true&charset=utf8mb4&loc=Local}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin123}
+      MINIO_BUCKET: ${MINIO_BUCKET:-qa-documents}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      VECTOR_SEARCH_ENABLED: ${VECTOR_SEARCH_ENABLED:-true}
+      QDRANT_ENDPOINT: ${QDRANT_ENDPOINT:-http://qdrant:6333}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-qa_chunks}
+      QDRANT_TIMEOUT_SECONDS: ${QDRANT_TIMEOUT_SECONDS:-10}
+    volumes:
+      - core_data:/app/data
+
+  api-go:
+    image: ghcr.io/${GHCR_USERNAME}/llm-doc-qa-api-go:${IMAGE_TAG:-main}
+    container_name: llm_doc_qa_api
+    restart: unless-stopped
+    depends_on:
+      core-go-rpc:
+        condition: service_started
+    environment:
+      PORT: 8080
+      CORE_RPC_ADDR: core-go-rpc:19090
+    ports:
+      - "8080:8080"
+
+  frontend:
+    image: ghcr.io/${GHCR_USERNAME}/llm-doc-qa-frontend:${IMAGE_TAG:-main}
+    container_name: llm_doc_qa_frontend
+    restart: unless-stopped
+    depends_on:
+      api-go:
+        condition: service_started
+    ports:
+      - "5173:80"
+
+volumes:
+  mysql_data:
+  minio_data:
+  qdrant_data:
+  core_data:

@@ -1,0 +1,6 @@
+data
+**/__pycache__
+**/.pytest_cache
+apps/agent-python-rpc/tests
+apps/agent-python-rpc/.env
+apps/core-go-rpc/.env

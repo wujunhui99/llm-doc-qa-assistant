@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY apps/agent-python-rpc/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+COPY apps/agent-python-rpc /app
+
+RUN useradd -m -u 10001 app && chown -R app:app /app
+
+ENV AGENT_RPC_HOST=0.0.0.0 \
+    AGENT_RPC_PORT=51000 \
+    LLM_RPC_HOST=0.0.0.0 \
+    LLM_RPC_PORT=51000
+
+EXPOSE 51000
+USER app
+
+CMD ["python", "-m", "app.server"]

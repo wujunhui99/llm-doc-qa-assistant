@@ -1,0 +1,197 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [Docker Build]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy via SSH
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+      GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      APP_DIR: /home/ubuntu/code/go_code/llm-doc-qa-assistant
+      COMPOSE_DIR: /home/ubuntu/code/go_code/llm-doc-qa-assistant/deploy/compose
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deploy compose artifacts in repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          compose_file="deploy/compose/docker-compose.yml"
+          if [[ ! -f "${compose_file}" ]]; then
+            echo "Missing required deploy compose file: ${compose_file}"
+            exit 1
+          fi
+
+          for image in \
+            llm-doc-qa-api-go \
+            llm-doc-qa-core-go-rpc \
+            llm-doc-qa-agent-python-rpc \
+            llm-doc-qa-frontend; do
+            if ! grep -q "${image}" "${compose_file}"; then
+              echo "Deploy compose does not reference image: ${image}"
+              exit 1
+            fi
+          done
+
+          if ! grep -q '\${IMAGE_TAG' "${compose_file}"; then
+            echo "Deploy compose must parameterize image tag with IMAGE_TAG."
+            exit 1
+          fi
+
+      - name: Validate deploy settings
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${DEPLOY_HOST}" ]]; then
+            echo "Missing required variable: DEPLOY_HOST"
+            exit 1
+          fi
+          if [[ -z "${DEPLOY_USER}" ]]; then
+            echo "Missing required variable: DEPLOY_USER"
+            exit 1
+          fi
+          if [[ -z "${GHCR_USERNAME}" ]]; then
+            echo "Missing required variable: GHCR_USERNAME"
+            exit 1
+          fi
+          if [[ -z "${DEPLOY_SSH_KEY}" ]]; then
+            echo "Missing required secret: DEPLOY_SSH_KEY"
+            exit 1
+          fi
+          if [[ -z "${GHCR_TOKEN}" ]]; then
+            echo "Missing required secret: GHCR_TOKEN"
+            exit 1
+          fi
+
+      - name: Resolve deploy metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          port="${DEPLOY_PORT:-}"
+          if [[ -z "${port}" ]]; then
+            port="22"
+          fi
+          echo "DEPLOY_PORT_EFFECTIVE=${port}" >> "$GITHUB_ENV"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            target_sha="${{ github.event.workflow_run.head_sha }}"
+          else
+            target_sha="${{ github.sha }}"
+          fi
+          short_sha="${target_sha:0:12}"
+
+          echo "TARGET_SHA=${target_sha}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=sha-${short_sha}" >> "$GITHUB_ENV"
+
+          echo "Deploy target SHA: ${target_sha}"
+          echo "Deploy image tag: sha-${short_sha}"
+
+      - name: Configure SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Add deploy host to known_hosts
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keyscan -p "${DEPLOY_PORT_EFFECTIVE}" -H "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Deploy compose stack and run health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ghcr_token_b64="$(printf '%s' "${GHCR_TOKEN}" | base64 | tr -d '\n')"
+
+          ssh -i ~/.ssh/id_ed25519 \
+            -p "${DEPLOY_PORT_EFFECTIVE}" \
+            -o StrictHostKeyChecking=yes \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "APP_DIR='${APP_DIR}' COMPOSE_DIR='${COMPOSE_DIR}' GHCR_USERNAME='${GHCR_USERNAME}' GHCR_TOKEN_B64='${ghcr_token_b64}' IMAGE_TAG='${IMAGE_TAG}' bash -se" <<'REMOTE'
+          set -euo pipefail
+
+          if [[ ! -d "${APP_DIR}" ]]; then
+            echo "App directory not found: ${APP_DIR}"
+            exit 1
+          fi
+
+          if [[ -d "${APP_DIR}/.git" ]]; then
+            cd "${APP_DIR}"
+            git fetch --prune origin main
+            git checkout main
+            git pull --ff-only origin main
+          fi
+
+          if [[ ! -d "${COMPOSE_DIR}" ]]; then
+            echo "Compose directory not found: ${COMPOSE_DIR}"
+            exit 1
+          fi
+
+          GHCR_TOKEN="$(printf '%s' "${GHCR_TOKEN_B64}" | (base64 --decode 2>/dev/null || base64 -d))"
+
+          cd "${COMPOSE_DIR}"
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+
+          export IMAGE_TAG
+          if docker compose version >/dev/null 2>&1; then
+            COMPOSE="docker compose"
+          elif command -v docker-compose >/dev/null 2>&1; then
+            COMPOSE="docker-compose"
+          else
+            echo "docker compose is not installed on server"
+            exit 1
+          fi
+
+          ${COMPOSE} pull
+          ${COMPOSE} up -d --remove-orphans
+
+          check_http() {
+            local url="$1"
+            local accepted_codes="$2"
+            local attempt=0
+            local max_attempts=30
+            while (( attempt < max_attempts )); do
+              attempt=$((attempt + 1))
+              code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "${url}" || true)"
+              if [[ " ${accepted_codes} " == *" ${code} "* ]]; then
+                echo "Health check OK: ${url} (status=${code})"
+                return 0
+              fi
+              echo "Health check pending: ${url} (status=${code}, attempt=${attempt}/${max_attempts})"
+              sleep 2
+            done
+            echo "Health check failed: ${url}"
+            return 1
+          }
+
+          check_http "http://localhost:8080" "200"
+          check_http "http://localhost:8080/api/config" "200 401"
+          REMOTE
