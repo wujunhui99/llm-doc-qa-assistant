@@ -20,6 +20,7 @@
   - return explicit error to caller
   - no mock/local answer fallback
 - Chat provider calls are unified by LiteLLM adapters (OpenAI/SiliconFlow/Claude/Ollama), reducing provider-specific parser drift.
+- LiteLLM model IDs are normalized to provider-qualified names (for example `openai/<model>`) to avoid provider-detection request failures.
 - Retrieval router keeps JSON fallback when tool-calling is unavailable, so auto-retrieval decisions do not hard fail on model capability mismatch.
 - Session expiration and invalid scope return deterministic errors.
 - Historical unreadable PDF chunks are repaired on-demand before retrieval.

@@ -128,11 +128,34 @@ def build_model_name(prefix: str, model: str) -> str:
     raw = (model or "").strip()
     if not raw:
         return raw
-    lower = raw.lower()
-    if "/" in lower:
-        return raw
-    clean_prefix = (prefix or "").strip()
+    clean_prefix = (prefix or "").strip().lower()
     if not clean_prefix:
+        return raw
+
+    lower = raw.lower()
+    if lower.startswith(f"{clean_prefix}/"):
+        return raw
+
+    # Keep explicit provider-qualified model names untouched.
+    provider_prefixes = (
+        "openai/",
+        "anthropic/",
+        "ollama/",
+        "azure/",
+        "vertex_ai/",
+        "bedrock/",
+        "gemini/",
+        "xai/",
+        "groq/",
+        "mistral/",
+        "cohere/",
+        "together_ai/",
+        "replicate/",
+        "deepinfra/",
+        "fireworks_ai/",
+        "huggingface/",
+    )
+    if lower.startswith(provider_prefixes):
         return raw
     return f"{clean_prefix}/{raw}"
 
