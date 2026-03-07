@@ -36,7 +36,7 @@
 - Workflow permissions are minimal-by-default (`contents: read`, plus `packages: write` only for image publish workflow).
 - Post-deploy health checks are mandatory and deployment fails on health check timeout/failure.
 - Deploy workflow validates repository-side compose artifacts before remote execution, reducing mis-deploy risk from stale or mismatched image references.
-- Deploy target path baseline is `/home/ubuntu/code/go_code/llm-doc-qa-assistant` (`$APP_DIR`), avoiding cross-project path reuse.
+- Deploy target path baseline is `/home/ubuntu/code/project/llm-doc-qa-assistant` (`$APP_DIR`), avoiding cross-project path reuse.
 
 ## Remaining Security Work
 - Add outbound egress allowlist for `agent-python-rpc` provider calls.

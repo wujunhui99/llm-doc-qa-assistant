@@ -81,7 +81,7 @@ The generated `deploy.yml` must use this deployment target profile unless this d
 - SSH host: `${{ vars.DEPLOY_HOST }}`
 - SSH user: `${{ vars.DEPLOY_USER }}`
 - SSH port: `${{ vars.DEPLOY_PORT }}` or `22`
-- App directory: `/home/ubuntu/code/go_code/llm-doc-qa-assistant`
+- App directory: `/home/ubuntu/code/project/llm-doc-qa-assistant`
 - Compose directory: `$APP_DIR/deploy/compose`
 - Health check endpoints:
   - `http://localhost:8080`

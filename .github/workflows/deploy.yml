@@ -26,8 +26,8 @@ jobs:
       GHCR_USERNAME: ${{ vars.GHCR_USERNAME }}
       GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
       DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      APP_DIR: /home/ubuntu/code/go_code/llm-doc-qa-assistant
-      COMPOSE_DIR: /home/ubuntu/code/go_code/llm-doc-qa-assistant/deploy/compose
+      APP_DIR: /home/ubuntu/code/project/llm-doc-qa-assistant
+      COMPOSE_DIR: /home/ubuntu/code/project/llm-doc-qa-assistant/deploy/compose
 
     steps:
       - name: Checkout
