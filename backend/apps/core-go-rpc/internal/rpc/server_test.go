@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -548,6 +549,98 @@ func TestCreateTurnRepairsUnreadablePDFChunks(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(rebuilt[0].Content), "endstream") {
 		t.Fatalf("expected repaired chunks without raw pdf tokens, got: %s", rebuilt[0].Content)
+	}
+}
+
+func TestCreateTurnAutoModeEmitsRetrievalDecision(t *testing.T) {
+	tmp := t.TempDir()
+	st, err := store.New(filepath.Join(tmp, "state.json"), filepath.Join(tmp, "audit.log"))
+	if err != nil {
+		t.Fatalf("init store failed: %v", err)
+	}
+
+	user := domainauth.User{
+		ID:        "usr_auto",
+		Email:     "auto@example.com",
+		CreatedAt: time.Now().UTC(),
+	}
+	doc := types.Document{
+		ID:            "doc_auto",
+		OwnerUserID:   user.ID,
+		Name:          "faq.md",
+		SizeBytes:     128,
+		MimeType:      "text/markdown",
+		StoragePath:   user.ID + "/doc_auto.md",
+		Status:        "ready",
+		ChunkCount:    1,
+		CreatedAt:     time.Now().UTC(),
+		LastUpdatedAt: time.Now().UTC(),
+	}
+	chunks := []types.Chunk{
+		{ID: "chk_auto_1", DocID: doc.ID, Index: 0, Content: "release date is 2026-04-15"},
+	}
+	if err := st.UpsertDocument(doc, chunks); err != nil {
+		t.Fatalf("seed document failed: %v", err)
+	}
+	thread := types.Thread{
+		ID:          "th_auto",
+		OwnerUserID: user.ID,
+		Title:       "auto",
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err := st.CreateThread(thread); err != nil {
+		t.Fatalf("create thread failed: %v", err)
+	}
+
+	llmSvc := &fakeLLMService{
+		generateAnswerFn: func(_ context.Context, in LLMGenerateRequest) (string, error) {
+			if len(in.Contexts) != 0 {
+				t.Fatalf("expected no retrieval contexts for small talk auto mode, got %d", len(in.Contexts))
+			}
+			return "hello", nil
+		},
+	}
+	server := &Server{
+		store:       st,
+		authService: fakeAuthUseCase{user: user},
+		objectStore: fakeObjectStore{},
+		llmService:  llmSvc,
+		logger:      log.New(io.Discard, "", 0),
+	}
+
+	out, err := server.CreateTurn(context.Background(), &qav1.CreateTurnRequest{
+		Token:     "token",
+		ThreadId:  thread.ID,
+		Message:   "hi",
+		ScopeType: "auto",
+	})
+	if err != nil {
+		t.Fatalf("create turn failed: %v", err)
+	}
+	if out.GetTurn().GetScopeType() != "all" {
+		t.Fatalf("expected scope type all, got %s", out.GetTurn().GetScopeType())
+	}
+
+	found := false
+	for _, item := range out.GetItems() {
+		if item.GetItemType() != "retrieval_decision" {
+			continue
+		}
+		found = true
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(item.GetPayloadJson()), &payload); err != nil {
+			t.Fatalf("decode retrieval_decision payload failed: %v", err)
+		}
+		if payload["mode"] != "auto" {
+			t.Fatalf("expected auto mode, got %+v", payload["mode"])
+		}
+		use, _ := payload["use_retrieval"].(bool)
+		if use {
+			t.Fatalf("expected use_retrieval false for small talk, payload=%+v", payload)
+		}
+	}
+	if !found {
+		t.Fatalf("expected retrieval_decision item")
 	}
 }
 

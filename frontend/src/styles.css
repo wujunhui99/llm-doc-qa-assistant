@@ -255,6 +255,51 @@ td {
   flex-wrap: wrap;
 }
 
+.qa-hint {
+  margin: 0;
+}
+
+.mention-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.mention-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(18, 130, 110, 0.16);
+  color: #0f5b4d;
+  font-size: 0.86rem;
+}
+
+.mention-menu {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.mention-option {
+  width: 100%;
+  text-align: left;
+  border-radius: 0;
+  background: #ffffff;
+  color: var(--ink);
+  border-bottom: 1px solid #e5edf0;
+}
+
+.mention-option:last-child {
+  border-bottom: none;
+}
+
+.mention-option:hover,
+.mention-option.active {
+  background: rgba(13, 127, 117, 0.12);
+}
+
 .doc-scope-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -293,6 +338,11 @@ td {
 
 .turn-answer {
   white-space: pre-line;
+}
+
+.retrieval-decision {
+  margin: 0.45rem 0 0;
+  font-size: 0.9rem;
 }
 
 .provider-grid {

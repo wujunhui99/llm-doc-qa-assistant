@@ -1,19 +1,65 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
+
+function stripDocMentions(text) {
+  return text.replace(/@doc\(([^)]+)\)/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
 export function QAPage({ token }) {
   const [documents, setDocuments] = useState([])
   const [threads, setThreads] = useState([])
   const [activeThreadId, setActiveThreadId] = useState('')
-  const [scopeType, setScopeType] = useState('all')
-  const [docIDs, setDocIDs] = useState([])
   const [message, setMessage] = useState('')
   const [turns, setTurns] = useState([])
   const [streamingTurn, setStreamingTurn] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [mentionTarget, setMentionTarget] = useState(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const textAreaRef = useRef(null)
 
   const activeThread = useMemo(() => threads.find((t) => t.id === activeThreadId) || null, [threads, activeThreadId])
+  const docByID = useMemo(() => {
+    const out = new Map()
+    documents.forEach((doc) => out.set(doc.id, doc))
+    return out
+  }, [documents])
+  const docIDByName = useMemo(() => {
+    const out = new Map()
+    documents.forEach((doc) => out.set(doc.name.toLowerCase(), doc.id))
+    return out
+  }, [documents])
+
+  const mentionedDocIDs = useMemo(() => {
+    const ids = []
+    for (const match of message.matchAll(/@doc\(([^)]+)\)/g)) {
+      const raw = (match?.[1] || '').trim()
+      if (!raw) continue
+      let docID = ''
+      if (docByID.has(raw)) {
+        docID = raw
+      } else {
+        docID = docIDByName.get(raw.toLowerCase()) || ''
+      }
+      if (docID && !ids.includes(docID)) {
+        ids.push(docID)
+      }
+    }
+    return ids
+  }, [message, docByID, docIDByName])
+
+  const mentionedDocs = useMemo(
+    () => mentionedDocIDs.map((id) => docByID.get(id)).filter(Boolean),
+    [mentionedDocIDs, docByID]
+  )
+
+  const mentionSuggestions = useMemo(() => {
+    if (!mentionTarget) return []
+    const q = (mentionTarget.query || '').trim().toLowerCase()
+    return documents
+      .filter((doc) => !q || doc.name.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [mentionTarget, documents])
 
   const bootstrap = async () => {
     try {
@@ -47,8 +93,37 @@ export function QAPage({ token }) {
     }
   }
 
-  const onDocScopeChange = (id) => {
-    setDocIDs((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]))
+  const syncMentionTarget = (nextMessage, cursorPos) => {
+    const cursor = typeof cursorPos === 'number' ? cursorPos : nextMessage.length
+    const before = nextMessage.slice(0, cursor)
+    const match = before.match(/(?:^|\s)@([^\s@()]*)$/)
+    if (!match) {
+      if (mentionTarget !== null) setMentionTarget(null)
+      return
+    }
+    const atIdx = before.lastIndexOf('@')
+    if (atIdx < 0) {
+      if (mentionTarget !== null) setMentionTarget(null)
+      return
+    }
+    setMentionTarget({ query: match[1] || '', start: atIdx, end: cursor })
+    setMentionIndex(0)
+  }
+
+  const applyMention = (doc) => {
+    if (!mentionTarget) return
+    const tokenText = `@doc(${doc.name})`
+    const nextMessage = `${message.slice(0, mentionTarget.start)}${tokenText} ${message.slice(mentionTarget.end)}`
+    const nextCursor = mentionTarget.start + tokenText.length + 1
+    setMessage(nextMessage)
+    setMentionTarget(null)
+    setMentionIndex(0)
+    requestAnimationFrame(() => {
+      if (textAreaRef.current) {
+        textAreaRef.current.focus()
+        textAreaRef.current.setSelectionRange(nextCursor, nextCursor)
+      }
+    })
   }
 
   const ask = async (e) => {
@@ -57,19 +132,17 @@ export function QAPage({ token }) {
       setError('Create or choose a thread first.')
       return
     }
-    if (!message.trim()) {
+    const cleanMessage = stripDocMentions(message)
+    if (!cleanMessage) {
       setError('Please type your question.')
       return
     }
-    if (scopeType === 'doc' && docIDs.length === 0) {
-      setError('Doc scope requires selecting at least one document.')
-      return
-    }
 
+    const forceDocIDs = [...mentionedDocIDs]
     const payload = {
-      message,
-      scope_type: scopeType,
-      scope_doc_ids: scopeType === 'doc' ? docIDs : []
+      message: cleanMessage,
+      scope_type: forceDocIDs.length > 0 ? 'doc' : 'auto',
+      scope_doc_ids: forceDocIDs
     }
 
     setLoading(true)
@@ -78,11 +151,12 @@ export function QAPage({ token }) {
       const draft = {
         turn: {
           id: `local_${Date.now()}`,
-          question: message.trim(),
+          question: cleanMessage,
           answer: '',
-          scope_type: scopeType
+          scope_type: payload.scope_type
         },
         citations: [],
+        retrieval_decision: null,
         items: []
       }
       let streamError = ''
@@ -101,6 +175,8 @@ export function QAPage({ token }) {
         if (event === 'message') {
           draft.turn.question = payloadObj.question || draft.turn.question
           draft.turn.scope_type = payloadObj.scope_type || draft.turn.scope_type
+        } else if (event === 'retrieval_decision') {
+          draft.retrieval_decision = payloadObj
         } else if (event === 'retrieval') {
           draft.citations = Array.isArray(payloadObj.citations) ? payloadObj.citations : []
         } else if (event === 'delta') {
@@ -115,6 +191,7 @@ export function QAPage({ token }) {
         setStreamingTurn({
           ...draft,
           turn: { ...draft.turn },
+          retrieval_decision: draft.retrieval_decision ? { ...draft.retrieval_decision } : null,
           citations: [...draft.citations]
         })
       })
@@ -127,6 +204,7 @@ export function QAPage({ token }) {
         {
           ...draft,
           turn: { ...draft.turn },
+          retrieval_decision: draft.retrieval_decision ? { ...draft.retrieval_decision } : null,
           citations: [...draft.citations],
           items: []
         },
@@ -134,6 +212,8 @@ export function QAPage({ token }) {
       ])
       setStreamingTurn(null)
       setMessage('')
+      setMentionTarget(null)
+      setMentionIndex(0)
     } catch (err) {
       setStreamingTurn(null)
       setError(err.message)
@@ -158,36 +238,70 @@ export function QAPage({ token }) {
       </div>
 
       <form onSubmit={ask} className="qa-form">
-        <label>
-          Scope
-          <select value={scopeType} onChange={(e) => setScopeType(e.target.value)}>
-            <option value="all">@all</option>
-            <option value="doc">@doc</option>
-          </select>
-        </label>
+        <p className="muted qa-hint">
+          Type <code>@</code> to force this turn to use selected document RAG. Without <code>@</code>, retrieval mode is auto.
+        </p>
 
-        {scopeType === 'doc' ? (
-          <div className="doc-scope-grid">
-            {documents.map((doc) => (
-              <label key={doc.id} className="scope-check">
-                <input
-                  type="checkbox"
-                  checked={docIDs.includes(doc.id)}
-                  onChange={() => onDocScopeChange(doc.id)}
-                />
-                <span>{doc.name}</span>
-              </label>
+        {mentionedDocs.length ? (
+          <div className="mention-tags">
+            {mentionedDocs.map((doc) => (
+              <span key={doc.id} className="mention-tag">
+                @{doc.name}
+              </span>
             ))}
-            {documents.length === 0 ? <p className="muted">Upload documents first.</p> : null}
           </div>
         ) : null}
 
         <textarea
+          ref={textAreaRef}
           rows={4}
           value={message}
-          onChange={(e) => setMessage(e.target.value)}
+          onChange={(e) => {
+            const next = e.target.value
+            setMessage(next)
+            syncMentionTarget(next, e.target.selectionStart)
+          }}
+          onSelect={(e) => syncMentionTarget(e.target.value, e.target.selectionStart)}
+          onKeyDown={(e) => {
+            if (!mentionTarget || mentionSuggestions.length === 0) return
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setMentionIndex((prev) => (prev + 1) % mentionSuggestions.length)
+              return
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setMentionIndex((prev) => (prev - 1 + mentionSuggestions.length) % mentionSuggestions.length)
+              return
+            }
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              applyMention(mentionSuggestions[mentionIndex] || mentionSuggestions[0])
+              return
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setMentionTarget(null)
+              setMentionIndex(0)
+            }
+          }}
           placeholder="Ask a grounded question..."
         />
+
+        {mentionTarget && mentionSuggestions.length > 0 ? (
+          <div className="mention-menu">
+            {mentionSuggestions.map((doc, idx) => (
+              <button
+                key={doc.id}
+                type="button"
+                className={idx === mentionIndex ? 'mention-option active' : 'mention-option'}
+                onClick={() => applyMention(doc)}
+              >
+                {doc.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <button type="submit" disabled={loading}>{loading ? 'Thinking...' : 'Submit Turn'}</button>
       </form>
@@ -202,6 +316,11 @@ export function QAPage({ token }) {
               <span>Q: {streamingTurn.turn.question}</span>
               <span className="status status-ready">streaming</span>
             </div>
+            {streamingTurn.retrieval_decision ? (
+              <p className="retrieval-decision muted">
+                Retrieval: {streamingTurn.retrieval_decision.use_retrieval ? 'used' : 'skipped'} · {streamingTurn.retrieval_decision.reason || 'n/a'}
+              </p>
+            ) : null}
             <p className="turn-answer">{streamingTurn.turn.answer || '...'}</p>
 
             <h4>Citations</h4>
@@ -224,6 +343,11 @@ export function QAPage({ token }) {
               <span>Q: {entry.turn.question}</span>
               <span className="status status-ready">{entry.turn.scope_type}</span>
             </div>
+            {entry.retrieval_decision ? (
+              <p className="retrieval-decision muted">
+                Retrieval: {entry.retrieval_decision.use_retrieval ? 'used' : 'skipped'} · {entry.retrieval_decision.reason || 'n/a'}
+              </p>
+            ) : null}
             <p className="turn-answer">{entry.turn.answer}</p>
 
             <h4>Citations</h4>

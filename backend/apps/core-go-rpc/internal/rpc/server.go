@@ -25,6 +25,7 @@ import (
 
 const (
 	maxUploadSize = 10 << 20
+	topKChunks    = 5
 )
 
 type AuthUseCase interface {
@@ -61,6 +62,12 @@ type LLMGenerateRequest struct {
 	PreviousTurnQuestion string
 	PreviousTurnAnswer   string
 	ActiveProvider       string
+}
+
+type retrievalDecision struct {
+	Mode         string
+	UseRetrieval bool
+	Reason       string
 }
 
 type LLMService interface {
@@ -436,8 +443,13 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 		return nil, status.Error(codes.InvalidArgument, "message is required")
 	}
 
+	explicitScopeType, retrievalMode, err := parseRequestScopeType(req.GetScopeType())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	ownedDocs := s.store.ListDocumentsByOwner(user.ID)
-	scope, err := qa.ResolveScope(message, strings.ToLower(strings.TrimSpace(req.GetScopeType())), req.GetScopeDocIds(), ownedDocs)
+	scope, err := qa.ResolveScope(message, explicitScopeType, req.GetScopeDocIds(), ownedDocs)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -447,25 +459,19 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 		return nil, status.Error(codes.InvalidArgument, "selected documents do not exist or are not owned by current user")
 	}
 
-	chunkMap := make(map[string][]types.Chunk, len(selectedDocs))
-	for i, doc := range selectedDocs {
-		chunks := s.store.GetChunksForDoc(doc.ID)
-		updatedDoc, updatedChunks, err := s.ensureDocumentChunksReady(ctx, user.ID, doc, chunks)
-		if err != nil {
-			s.logger.Printf("document chunk repair warning: doc=%s err=%v", doc.ID, err)
-		} else {
-			selectedDocs[i] = updatedDoc
-			chunks = updatedChunks
-		}
-		chunkMap[doc.ID] = chunks
-	}
-	retrieved := s.retrieveChunks(ctx, user.ID, scope.QuestionBody, selectedDocs, chunkMap, 5)
-	citations := buildCitations(retrieved)
-
 	previousTurns := s.store.ListTurnsByThread(thread.ID)
 	sort.Slice(previousTurns, func(i, j int) bool {
 		return previousTurns[i].CreatedAt.Before(previousTurns[j].CreatedAt)
 	})
+
+	activeProvider := s.store.GetProvider().ActiveProvider
+	decision := s.decideRetrieval(ctx, user.ID, thread.ID, scope, retrievalMode, selectedDocs, previousTurns, activeProvider)
+
+	var retrieved []qa.ScoredChunk
+	if decision.UseRetrieval {
+		retrieved = s.retrieveForScope(ctx, user.ID, scope.QuestionBody, selectedDocs, topKChunks)
+	}
+	citations := buildCitations(retrieved)
 
 	now := time.Now().UTC()
 	effectiveThinkMode := false
@@ -481,7 +487,6 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 		UpdatedAt:   now,
 	}
 
-	activeProvider := s.store.GetProvider().ActiveProvider
 	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, effectiveThinkMode, nil)
 	if err != nil {
 		return nil, err
@@ -504,12 +509,26 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 		{
 			ID:       types.NewID("item"),
 			TurnID:   turn.ID,
+			ItemType: "retrieval_decision",
+			Payload: map[string]interface{}{
+				"mode":               decision.Mode,
+				"use_retrieval":      decision.UseRetrieval,
+				"reason":             decision.Reason,
+				"scope_type":         turn.ScopeType,
+				"scope_doc_ids":      turn.ScopeDocIDs,
+				"selected_doc_count": len(selectedDocs),
+			},
+			CreatedAt: now.Add(1 * time.Millisecond),
+		},
+		{
+			ID:       types.NewID("item"),
+			TurnID:   turn.ID,
 			ItemType: "retrieval",
 			Payload: map[string]interface{}{
 				"count":     len(citations),
 				"citations": citations,
 			},
-			CreatedAt: now.Add(1 * time.Millisecond),
+			CreatedAt: now.Add(2 * time.Millisecond),
 		},
 		{
 			ID:       types.NewID("item"),
@@ -519,7 +538,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 				"answer":    answer,
 				"citations": citations,
 			},
-			CreatedAt: now.Add(2 * time.Millisecond),
+			CreatedAt: now.Add(3 * time.Millisecond),
 		},
 	}
 	if err := s.store.CreateOrUpdateTurn(turn, items); err != nil {
@@ -571,8 +590,13 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 		return status.Error(codes.InvalidArgument, "message is required")
 	}
 
+	explicitScopeType, retrievalMode, err := parseRequestScopeType(req.GetScopeType())
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
 	ownedDocs := s.store.ListDocumentsByOwner(user.ID)
-	scope, err := qa.ResolveScope(message, strings.ToLower(strings.TrimSpace(req.GetScopeType())), req.GetScopeDocIds(), ownedDocs)
+	scope, err := qa.ResolveScope(message, explicitScopeType, req.GetScopeDocIds(), ownedDocs)
 	if err != nil {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -582,25 +606,19 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 		return status.Error(codes.InvalidArgument, "selected documents do not exist or are not owned by current user")
 	}
 
-	chunkMap := make(map[string][]types.Chunk, len(selectedDocs))
-	for i, doc := range selectedDocs {
-		chunks := s.store.GetChunksForDoc(doc.ID)
-		updatedDoc, updatedChunks, repairErr := s.ensureDocumentChunksReady(ctx, user.ID, doc, chunks)
-		if repairErr != nil {
-			s.logger.Printf("document chunk repair warning: doc=%s err=%v", doc.ID, repairErr)
-		} else {
-			selectedDocs[i] = updatedDoc
-			chunks = updatedChunks
-		}
-		chunkMap[doc.ID] = chunks
-	}
-	retrieved := s.retrieveChunks(ctx, user.ID, scope.QuestionBody, selectedDocs, chunkMap, 5)
-	citations := buildCitations(retrieved)
-
 	previousTurns := s.store.ListTurnsByThread(thread.ID)
 	sort.Slice(previousTurns, func(i, j int) bool {
 		return previousTurns[i].CreatedAt.Before(previousTurns[j].CreatedAt)
 	})
+
+	activeProvider := s.store.GetProvider().ActiveProvider
+	decision := s.decideRetrieval(ctx, user.ID, thread.ID, scope, retrievalMode, selectedDocs, previousTurns, activeProvider)
+
+	var retrieved []qa.ScoredChunk
+	if decision.UseRetrieval {
+		retrieved = s.retrieveForScope(ctx, user.ID, scope.QuestionBody, selectedDocs, topKChunks)
+	}
+	citations := buildCitations(retrieved)
 
 	now := time.Now().UTC()
 	effectiveThinkMode := false
@@ -632,6 +650,24 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 		return err
 	}
 
+	decisionItem := types.TurnItem{
+		ID:       types.NewID("item"),
+		TurnID:   turn.ID,
+		ItemType: "retrieval_decision",
+		Payload: map[string]interface{}{
+			"mode":               decision.Mode,
+			"use_retrieval":      decision.UseRetrieval,
+			"reason":             decision.Reason,
+			"scope_type":         turn.ScopeType,
+			"scope_doc_ids":      turn.ScopeDocIDs,
+			"selected_doc_count": len(selectedDocs),
+		},
+		CreatedAt: now.Add(1 * time.Millisecond),
+	}
+	if err := stream.Send(toProtoTurnItem(decisionItem)); err != nil {
+		return err
+	}
+
 	retrievalItem := types.TurnItem{
 		ID:       types.NewID("item"),
 		TurnID:   turn.ID,
@@ -640,14 +676,13 @@ func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreS
 			"count":     len(citations),
 			"citations": citations,
 		},
-		CreatedAt: now.Add(1 * time.Millisecond),
+		CreatedAt: now.Add(2 * time.Millisecond),
 	}
 	if err := stream.Send(toProtoTurnItem(retrievalItem)); err != nil {
 		return err
 	}
 
-	streamItems := []types.TurnItem{messageItem, retrievalItem}
-	activeProvider := s.store.GetProvider().ActiveProvider
+	streamItems := []types.TurnItem{messageItem, decisionItem, retrievalItem}
 	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, effectiveThinkMode, func(delta string, thinkingDelta string) error {
 		_ = thinkingDelta
 		if strings.TrimSpace(delta) == "" {
@@ -863,6 +898,225 @@ func (s *Server) generateAnswer(
 		return "", status.Error(codes.Unavailable, "LLM provider returned empty answer")
 	}
 	return answer, nil
+}
+
+func parseRequestScopeType(raw string) (explicitScopeType string, retrievalMode string, err error) {
+	scope := strings.ToLower(strings.TrimSpace(raw))
+	switch scope {
+	case "", "auto":
+		return "", "auto", nil
+	case "all":
+		return "all", "force", nil
+	case "doc":
+		return "doc", "force", nil
+	default:
+		return "", "", fmt.Errorf("scope_type must be auto, all, or doc")
+	}
+}
+
+func (s *Server) retrieveForScope(
+	ctx context.Context,
+	ownerID string,
+	question string,
+	selectedDocs []types.Document,
+	topK int,
+) []qa.ScoredChunk {
+	if len(selectedDocs) == 0 {
+		return nil
+	}
+
+	docs := append([]types.Document(nil), selectedDocs...)
+	chunkMap := make(map[string][]types.Chunk, len(docs))
+	for i, doc := range docs {
+		chunks := s.store.GetChunksForDoc(doc.ID)
+		updatedDoc, updatedChunks, err := s.ensureDocumentChunksReady(ctx, ownerID, doc, chunks)
+		if err != nil {
+			s.logger.Printf("document chunk repair warning: doc=%s err=%v", doc.ID, err)
+		} else {
+			docs[i] = updatedDoc
+			chunks = updatedChunks
+		}
+		chunkMap[doc.ID] = chunks
+	}
+
+	return s.retrieveChunks(ctx, ownerID, question, docs, chunkMap, topK)
+}
+
+func (s *Server) decideRetrieval(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+	scope qa.Scope,
+	retrievalMode string,
+	selectedDocs []types.Document,
+	previousTurns []types.Turn,
+	activeProvider string,
+) retrievalDecision {
+	mode := strings.ToLower(strings.TrimSpace(retrievalMode))
+	if mode != "force" {
+		mode = "auto"
+	}
+	if scope.Type == "doc" {
+		mode = "force"
+	}
+	if len(selectedDocs) == 0 {
+		return retrievalDecision{
+			Mode:         mode,
+			UseRetrieval: false,
+			Reason:       "no documents available in current scope",
+		}
+	}
+	if mode == "force" {
+		reason := "explicit retrieval scope"
+		if scope.Type == "doc" {
+			reason = "explicit @doc selection"
+		}
+		return retrievalDecision{
+			Mode:         mode,
+			UseRetrieval: true,
+			Reason:       reason,
+		}
+	}
+
+	if use, decided, reason := ruleBasedRetrievalDecision(scope.QuestionBody); decided {
+		return retrievalDecision{
+			Mode:         "auto",
+			UseRetrieval: use,
+			Reason:       reason,
+		}
+	}
+
+	if use, reason, ok := s.llmDecideRetrieval(ctx, ownerID, threadID, scope, previousTurns, activeProvider); ok {
+		return retrievalDecision{
+			Mode:         "auto",
+			UseRetrieval: use,
+			Reason:       reason,
+		}
+	}
+
+	return retrievalDecision{
+		Mode:         "auto",
+		UseRetrieval: true,
+		Reason:       "auto fallback: uncertain, retrieval enabled",
+	}
+}
+
+func ruleBasedRetrievalDecision(question string) (useRetrieval bool, decided bool, reason string) {
+	q := strings.TrimSpace(strings.ToLower(question))
+	if q == "" {
+		return false, true, "empty question"
+	}
+
+	smallTalkKeywords := []string{
+		"hi", "hello", "hey", "thanks", "thank you",
+		"你好", "嗨", "谢谢", "你是谁", "在吗", "早上好", "晚上好",
+	}
+	for _, kw := range smallTalkKeywords {
+		if strings.Contains(q, kw) {
+			return false, true, "rule: small talk, retrieval skipped"
+		}
+	}
+
+	retrievalKeywords := []string{
+		"根据文档", "文档", "资料", "合同", "条款", "章节", "附件", "引用",
+		"from document", "in the doc", "citation", "uploaded file", "upload",
+	}
+	for _, kw := range retrievalKeywords {
+		if strings.Contains(q, kw) {
+			return true, true, "rule: document-evidence query"
+		}
+	}
+
+	if strings.Contains(q, "上面") || strings.Contains(q, "上一轮") || strings.Contains(q, "继续") || strings.Contains(q, "刚才") {
+		return true, true, "rule: likely context continuation"
+	}
+
+	return false, false, "rule undecided"
+}
+
+func (s *Server) llmDecideRetrieval(
+	ctx context.Context,
+	ownerID string,
+	threadID string,
+	scope qa.Scope,
+	previousTurns []types.Turn,
+	activeProvider string,
+) (useRetrieval bool, reason string, ok bool) {
+	if s.llmService == nil {
+		return false, "llm unavailable for decision", false
+	}
+
+	judgePrompt := strings.TrimSpace(
+		"你是检索路由器。判断用户问题是否需要先检索其已上传文档再回答。\n" +
+			"仅输出一行 JSON，格式必须是：{\"use_retrieval\":true|false,\"reason\":\"简短原因\"}。\n" +
+			"不要输出其他任何文字。\n" +
+			"用户问题：" + scope.QuestionBody,
+	)
+
+	req := LLMGenerateRequest{
+		OwnerUserID:    ownerID,
+		ThreadID:       threadID,
+		TurnID:         types.NewID("route"),
+		Question:       judgePrompt,
+		ScopeType:      scope.Type,
+		ScopeDocIDs:    append([]string(nil), scope.DocIDs...),
+		ThinkMode:      false,
+		ActiveProvider: strings.TrimSpace(activeProvider),
+	}
+	if len(previousTurns) > 0 {
+		last := previousTurns[len(previousTurns)-1]
+		req.PreviousTurnQuestion = last.Question
+		req.PreviousTurnAnswer = last.Answer
+	}
+
+	out, err := s.llmService.GenerateAnswer(ctx, req)
+	if err != nil {
+		s.logger.Printf("llm retrieval decision warning: %v", err)
+		return false, "llm decision failed", false
+	}
+
+	use, parsedReason, parsed := parseLLMRetrievalDecision(out)
+	if !parsed {
+		s.logger.Printf("llm retrieval decision parse warning: output=%q", truncate(out, 200))
+		return false, "llm output undecidable", false
+	}
+	return use, "llm: " + parsedReason, true
+}
+
+func parseLLMRetrievalDecision(raw string) (useRetrieval bool, reason string, ok bool) {
+	type llmDecision struct {
+		UseRetrieval bool   `json:"use_retrieval"`
+		Reason       string `json:"reason"`
+	}
+
+	text := strings.TrimSpace(raw)
+	start := strings.Index(text, "{")
+	end := strings.LastIndex(text, "}")
+	if start >= 0 && end > start {
+		var out llmDecision
+		if err := json.Unmarshal([]byte(text[start:end+1]), &out); err == nil {
+			r := strings.TrimSpace(out.Reason)
+			if r == "" {
+				r = "json decision"
+			}
+			return out.UseRetrieval, r, true
+		}
+	}
+
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "不需要检索") || strings.Contains(lower, "skip retrieval") || strings.Contains(lower, "use_retrieval\":false") {
+		return false, "text decision", true
+	}
+	if strings.Contains(lower, "需要检索") || strings.Contains(lower, "use retrieval") || strings.Contains(lower, "use_retrieval\":true") {
+		return true, "text decision", true
+	}
+	if strings.Contains(lower, "yes") || strings.Contains(lower, "true") {
+		return true, "text decision", true
+	}
+	if strings.Contains(lower, "no") || strings.Contains(lower, "false") {
+		return false, "text decision", true
+	}
+	return false, "", false
 }
 
 func (s *Server) authenticate(ctx context.Context, token string) (domainauth.User, error) {
