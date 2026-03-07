@@ -25,3 +25,4 @@ A first-time user can create an account, upload personal documents (TXT/Markdown
 - At least one citation is shown for evidence-backed responses.
 - No data from other users appears in retrieval context or citations.
 - For streaming turn path, UI renders incremental `delta` answer chunks before `final` event completion.
+- In deployed container mode, frontend API requests use same-origin `/api/*` routing (not hardcoded `localhost`), so onboarding works from remote client devices.

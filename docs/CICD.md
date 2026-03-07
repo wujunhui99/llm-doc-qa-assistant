@@ -62,6 +62,7 @@ The following implementation defaults are required unless this document is updat
 - Repository deployment artifacts:
   - `deploy/compose/docker-compose.yml` (must reference GHCR images and `${IMAGE_TAG}` tag variable)
   - `deploy/compose/.env.example` (server env template for compose runtime)
+  - For mixed local architectures, app services may pin `platform: linux/amd64` in deploy compose to avoid manifest mismatch.
 - Docker build files:
   - `backend/Dockerfile.api-go`
   - `backend/Dockerfile.core-go-rpc`

@@ -19,7 +19,7 @@
 
 ## Architecture
 - Entry: `frontend/src/App.jsx`.
-- API client: `frontend/src/api.js` (contract-driven, bearer token support).
+- API client: `frontend/src/api.js` (contract-driven, bearer token support, default same-origin `/api` base).
 - Pages:
   - `pages/AuthPage.jsx`
   - `pages/DocumentsPage.jsx`
@@ -39,6 +39,7 @@
   - `all`: global owned-doc retrieval,
   - `doc`: explicit checkbox selection for owned docs.
 - Mobile + desktop supported by responsive CSS rules.
+- Deployed frontend defaults to same-origin API calls (`/api/*`) instead of hardcoded `localhost`, so cross-device access works.
 
 ## Quality Notes
 - Frontend build/test commands exist via `vite` scripts.

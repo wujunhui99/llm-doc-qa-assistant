@@ -38,6 +38,7 @@
 - Post-deploy health checks are mandatory and deployment fails on health check timeout/failure.
 - Deploy workflow validates repository-side compose artifacts before remote execution, reducing mis-deploy risk from stale or mismatched image references.
 - Deploy target path baseline is `/home/ubuntu/code/project/llm-doc-qa-assistant` (`$APP_DIR`), avoiding cross-project path reuse.
+- Frontend gateway proxy uses same-origin `/api` routing, avoiding client-side hardcoded localhost endpoints in deployed environments.
 
 ## Remaining Security Work
 - Add outbound egress allowlist for `agent-python-rpc` provider calls.

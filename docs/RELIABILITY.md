@@ -37,6 +37,7 @@
 - Deploy supports manual image tag selection and falls back to `main` when non-`main` tag pull fails.
 - Deploy uses mandatory post-deploy health checks for `http://localhost:8080` and `http://localhost:8080/api/config`; failed checks fail the deployment.
 - Deploy workflow app root is standardized to `/home/ubuntu/code/project/llm-doc-qa-assistant` to keep rollout target aligned with this repository.
+- Deploy compose may pin app image platform to `linux/amd64` for architecture compatibility when running on arm-based local hosts.
 
 ## Remaining Work
 - Add retry/circuit-breaker around Python LLM RPC and provider HTTP.

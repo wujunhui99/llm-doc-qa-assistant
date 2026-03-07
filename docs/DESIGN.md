@@ -19,6 +19,7 @@ UI provides a consistent visual system across Auth, Document, QA, and Settings p
 - Citations always visible in QA turn cards.
 - Scope controls (`@all` / `@doc`) placed in query composer.
 - Ownership-visible document table tied to current authenticated user.
+- Deployed app uses same-origin API route (`/api`) through frontend gateway proxy, avoiding localhost-target confusion on client devices.
 
 ## Constraint compliance
 - Prioritizes clarity over ornament.

@@ -29,6 +29,32 @@ Frontend + Go/Python microservices for document QA (RAG + multi-turn agent QA).
 docker compose up -d
 ```
 
+## Run with Docker Compose (GHCR images)
+Use `deploy/compose` when you want to run the project from published images.
+
+```bash
+cd deploy/compose
+cp .env.example .env
+```
+
+Edit `.env` at least:
+- `GHCR_USERNAME=<your-github-username-or-org>`
+- `IMAGE_TAG=main` (or `sha-<short>` from CI)
+
+Login and run:
+```bash
+echo "<ghcr_token>" | docker login ghcr.io -u "<github_username>" --password-stdin
+docker compose pull
+docker compose up -d --remove-orphans
+```
+
+Useful commands:
+```bash
+docker compose ps
+docker compose logs -f api-go
+docker compose down
+```
+
 ## Start all services
 ```bash
 make start all
