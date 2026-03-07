@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -66,6 +67,10 @@ func (s *Server) handleThreadsSubRoutes(w http.ResponseWriter, r *http.Request) 
 
 	if len(parts) == 2 && parts[1] == "turns" && r.Method == http.MethodPost {
 		s.handleCreateTurn(w, r, threadID)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "turns" && parts[2] == "stream" && r.Method == http.MethodPost {
+		s.handleCreateTurnStream(w, r, threadID)
 		return
 	}
 	if len(parts) == 4 && parts[1] == "turns" && parts[3] == "stream" && r.Method == http.MethodGet {
@@ -133,6 +138,63 @@ func (s *Server) handleTurnStream(w http.ResponseWriter, r *http.Request, thread
 	}
 
 	for _, item := range resp.GetItems() {
+		event := map[string]interface{}{
+			"id":         item.GetId(),
+			"turn_id":    item.GetTurnId(),
+			"item_type":  item.GetItemType(),
+			"payload":    decodePayloadJSON(item.GetPayloadJson()),
+			"created_at": item.GetCreatedAt(),
+		}
+		payload, _ := json.Marshal(event)
+		_, _ = fmt.Fprintf(w, "event: %s\n", item.GetItemType())
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+		flusher.Flush()
+	}
+	_, _ = fmt.Fprint(w, "event: done\ndata: {}\n\n")
+	flusher.Flush()
+}
+
+func (s *Server) handleCreateTurnStream(w http.ResponseWriter, r *http.Request, threadID string) {
+	token := middleware.TokenFromContext(r.Context())
+
+	var req apitypes.CreateTurnRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+
+	coreStream, err := s.threadLogic.CreateTurnStream(r.Context(), token, threadID, req.Message, req.ScopeType, req.ScopeDocIDs)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "stream_unsupported", "streaming unsupported")
+		return
+	}
+
+	for {
+		item, recvErr := coreStream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			event := map[string]interface{}{
+				"message": recvErr.Error(),
+			}
+			payload, _ := json.Marshal(event)
+			_, _ = fmt.Fprintf(w, "event: error\n")
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+			flusher.Flush()
+			return
+		}
+
 		event := map[string]interface{}{
 			"id":         item.GetId(),
 			"turn_id":    item.GetTurnId(),

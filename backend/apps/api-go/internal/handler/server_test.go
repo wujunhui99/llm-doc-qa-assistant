@@ -33,6 +33,7 @@ type mockCoreClient struct {
 	listThreadsFn      func(ctx context.Context, in *qav1.ListThreadsRequest, opts ...grpc.CallOption) (*qav1.ListThreadsReply, error)
 	createThreadFn     func(ctx context.Context, in *qav1.CreateThreadRequest, opts ...grpc.CallOption) (*qav1.ThreadReply, error)
 	createTurnFn       func(ctx context.Context, in *qav1.CreateTurnRequest, opts ...grpc.CallOption) (*qav1.CreateTurnReply, error)
+	createTurnStreamFn func(ctx context.Context, in *qav1.CreateTurnRequest, opts ...grpc.CallOption) (qav1.CoreService_CreateTurnStreamClient, error)
 	getTurnFn          func(ctx context.Context, in *qav1.GetTurnRequest, opts ...grpc.CallOption) (*qav1.GetTurnReply, error)
 	getConfigFn        func(ctx context.Context, in *qav1.MeRequest, opts ...grpc.CallOption) (*qav1.ConfigReply, error)
 	setConfigFn        func(ctx context.Context, in *qav1.SetConfigRequest, opts ...grpc.CallOption) (*qav1.ConfigReply, error)
@@ -127,6 +128,13 @@ func (m *mockCoreClient) CreateTurn(ctx context.Context, in *qav1.CreateTurnRequ
 		return m.createTurnFn(ctx, in, opts...)
 	}
 	return nil, status.Error(codes.Unimplemented, "create turn not mocked")
+}
+
+func (m *mockCoreClient) CreateTurnStream(ctx context.Context, in *qav1.CreateTurnRequest, opts ...grpc.CallOption) (qav1.CoreService_CreateTurnStreamClient, error) {
+	if m.createTurnStreamFn != nil {
+		return m.createTurnStreamFn(ctx, in, opts...)
+	}
+	return nil, status.Error(codes.Unimplemented, "create turn stream not mocked")
 }
 
 func (m *mockCoreClient) GetTurn(ctx context.Context, in *qav1.GetTurnRequest, opts ...grpc.CallOption) (*qav1.GetTurnReply, error) {

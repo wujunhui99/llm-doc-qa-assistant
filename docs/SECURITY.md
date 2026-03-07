@@ -12,11 +12,11 @@
 ## Microservice Security Controls (Implemented)
 - Public exposure boundary:
   - Only `api-go` is frontend-facing.
-  - `core-go-rpc` and `llm-python-rpc` are internal-only.
+  - `core-go-rpc` and `agent-python-rpc` are internal-only.
 - Policy enforcement point:
   - `core-go-rpc` authenticates session token and enforces ownership/scope.
 - LLM boundary:
-  - `llm-python-rpc` does not perform tenant authorization.
+  - `agent-python-rpc` does not perform tenant authorization.
   - Core sends only scoped/authorized context to Python service.
 - Vector isolation:
   - `core-go-rpc` applies owner filter for Qdrant search.
@@ -30,6 +30,6 @@
 - Provider/config changes.
 
 ## Remaining Security Work
-- Add outbound egress allowlist for `llm-python-rpc` provider calls.
+- Add outbound egress allowlist for `agent-python-rpc` provider calls.
 - Encrypt sensitive backups at rest.
 - Add SAST/secret scanning and dependency checks in CI.

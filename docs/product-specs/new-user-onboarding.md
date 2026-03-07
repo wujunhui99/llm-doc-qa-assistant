@@ -17,9 +17,11 @@ A first-time user can create an account, upload personal documents (TXT/Markdown
 - `POST /api/documents/upload`
 - `POST /api/threads`
 - `POST /api/threads/{thread_id}/turns`
+- `POST /api/threads/{thread_id}/turns/stream` (SSE incremental answer path)
 
 ## Acceptance Criteria
 - Register/login flow succeeds for valid input.
 - Upload feedback is visible and non-blocking for TXT/Markdown/PDF.
 - At least one citation is shown for evidence-backed responses.
 - No data from other users appears in retrieval context or citations.
+- For streaming turn path, UI renders incremental `delta` answer chunks before `final` event completion.

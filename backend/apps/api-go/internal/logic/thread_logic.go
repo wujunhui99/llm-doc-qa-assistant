@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 	"llm-doc-qa-assistant/backend/apps/api-go/internal/svc"
+	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 )
 
 type ThreadLogic struct {
@@ -32,6 +32,16 @@ func (l *ThreadLogic) CreateTurn(ctx context.Context, token, threadID, message, 
 	ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	return l.svcCtx.Core.CreateTurn(ctx, &qav1.CreateTurnRequest{Token: token, ThreadId: threadID, Message: message, ScopeType: scopeType, ScopeDocIds: scopeDocIDs})
+}
+
+func (l *ThreadLogic) CreateTurnStream(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string) (qav1.CoreService_CreateTurnStreamClient, error) {
+	return l.svcCtx.Core.CreateTurnStream(ctx, &qav1.CreateTurnRequest{
+		Token:       token,
+		ThreadId:    threadID,
+		Message:     message,
+		ScopeType:   scopeType,
+		ScopeDocIds: scopeDocIDs,
+	})
 }
 
 func (l *ThreadLogic) GetTurn(ctx context.Context, token, threadID, turnID string) (*qav1.GetTurnReply, error) {

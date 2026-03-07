@@ -21,3 +21,14 @@ func TestIsReadableText(t *testing.T) {
 		t.Fatalf("expected unreadable gibberish text")
 	}
 }
+
+func TestLooksLikeCorruptedPDFText(t *testing.T) {
+	bad := "嫒渺葖鉖澭䤓ὲ嘴馡刮´퀞牪⯹ﺅ쏤㪬䓁붎꼝眵㐮棙ݤ쇵깥ꍏ邈험魮砭塷㢻"
+	if !LooksLikeCorruptedPDFText(bad) {
+		t.Fatalf("expected mojibake-like text to be detected as corrupted")
+	}
+	good := "项目概述：设计并实现一个基于AI的智能文档问答系统，支持用户上传文档并进行多轮问答。"
+	if LooksLikeCorruptedPDFText(good) {
+		t.Fatalf("expected normal chinese text not to be detected as corrupted")
+	}
+}

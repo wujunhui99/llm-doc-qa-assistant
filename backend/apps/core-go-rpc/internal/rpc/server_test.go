@@ -25,7 +25,9 @@ import (
 
 type fakeLLMService struct {
 	generateAnswerFn func(ctx context.Context, in LLMGenerateRequest) (string, error)
+	streamAnswerFn   func(ctx context.Context, in LLMGenerateRequest, onDelta func(string) error) (string, error)
 	embedTextsFn     func(ctx context.Context, texts []string) ([][]float32, error)
+	extractTextFn    func(ctx context.Context, filename, mimeType string, content []byte) (string, error)
 }
 
 func (m *fakeLLMService) GenerateAnswer(ctx context.Context, in LLMGenerateRequest) (string, error) {
@@ -35,11 +37,37 @@ func (m *fakeLLMService) GenerateAnswer(ctx context.Context, in LLMGenerateReque
 	return "mock answer", nil
 }
 
+func (m *fakeLLMService) GenerateAnswerStream(ctx context.Context, in LLMGenerateRequest, onDelta func(string) error) (string, error) {
+	if m.streamAnswerFn != nil {
+		return m.streamAnswerFn(ctx, in, onDelta)
+	}
+	if m.generateAnswerFn != nil {
+		answer, err := m.generateAnswerFn(ctx, in)
+		if err != nil {
+			return "", err
+		}
+		if onDelta != nil && answer != "" {
+			if cbErr := onDelta(answer); cbErr != nil {
+				return "", cbErr
+			}
+		}
+		return answer, nil
+	}
+	return "mock answer", nil
+}
+
 func (m *fakeLLMService) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if m.embedTextsFn != nil {
 		return m.embedTextsFn(ctx, texts)
 	}
 	return nil, nil
+}
+
+func (m *fakeLLMService) ExtractDocumentText(ctx context.Context, filename, mimeType string, content []byte) (string, error) {
+	if m.extractTextFn != nil {
+		return m.extractTextFn(ctx, filename, mimeType, content)
+	}
+	return "", nil
 }
 
 type fakeAuthUseCase struct {
@@ -215,7 +243,7 @@ func TestGenerateAnswerUsesLLMRPC(t *testing.T) {
 	turn := types.Turn{ID: "turn_1", ThreadID: "th_1", Question: "q", ScopeType: "all"}
 	prev := []types.Turn{{Question: "prev q", Answer: "prev a"}}
 
-	answer, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, prev, "openai")
+	answer, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, prev, "openai", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -245,7 +273,7 @@ func TestGenerateAnswerReturnsUnavailableOnLLMError(t *testing.T) {
 	}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
-	_, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, nil, "")
+	_, err := s.generateAnswer(context.Background(), "usr_1", turn, retrieved, nil, "", nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -258,7 +286,7 @@ func TestGenerateAnswerReturnsFailedPreconditionWhenLLMNil(t *testing.T) {
 	s := &Server{llmService: nil, logger: log.New(io.Discard, "", 0)}
 	turn := types.Turn{Question: "question", ScopeType: "all"}
 
-	_, err := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "")
+	_, err := s.generateAnswer(context.Background(), "usr_1", turn, nil, nil, "", nil)
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -461,6 +489,12 @@ func TestCreateTurnRepairsUnreadablePDFChunks(t *testing.T) {
 		},
 	}
 	llmSvc := &fakeLLMService{
+		extractTextFn: func(_ context.Context, filename, mimeType string, _ []byte) (string, error) {
+			if filename != "spec.pdf" || mimeType != "application/pdf" {
+				t.Fatalf("unexpected extract args: filename=%s mime=%s", filename, mimeType)
+			}
+			return "项目概述 智能文档问答助手用于上传文档并回答问题", nil
+		},
 		generateAnswerFn: func(_ context.Context, req LLMGenerateRequest) (string, error) {
 			if len(req.Contexts) == 0 {
 				t.Fatalf("expected contexts after repair")

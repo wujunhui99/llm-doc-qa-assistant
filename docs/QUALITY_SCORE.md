@@ -31,4 +31,4 @@
 - A change is not complete unless unit tests are added/updated and pass locally.
 - Minimum local verification before commit:
   - `cd backend && go test ./...`
-  - `cd backend/apps/llm-python-rpc && python3 -m unittest discover -s tests -p 'test_*.py'`
+  - `cd backend/apps/agent-python-rpc && python3 -m unittest discover -s tests -p 'test_*.py'`

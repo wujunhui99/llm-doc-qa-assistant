@@ -3,17 +3,21 @@ package llmrpc
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	corerpc "llm-doc-qa-assistant/backend/apps/core-go-rpc/internal/rpc"
 	qav1 "llm-doc-qa-assistant/backend/proto/gen/go/qa/v1"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 type fakeLlmGRPCClient struct {
 	embedFn    func(ctx context.Context, in *qav1.EmbedTextsRequest, opts ...grpc.CallOption) (*qav1.EmbedTextsReply, error)
+	extractFn  func(ctx context.Context, in *qav1.ExtractDocumentTextRequest, opts ...grpc.CallOption) (*qav1.ExtractDocumentTextReply, error)
 	generateFn func(ctx context.Context, in *qav1.GenerateAnswerRequest, opts ...grpc.CallOption) (*qav1.GenerateAnswerReply, error)
+	streamFn   func(ctx context.Context, in *qav1.GenerateAnswerRequest, opts ...grpc.CallOption) (qav1.LlmService_StreamGenerateAnswerClient, error)
 }
 
 func (f *fakeLlmGRPCClient) Health(ctx context.Context, in *qav1.Empty, opts ...grpc.CallOption) (*qav1.HealthReply, error) {
@@ -32,6 +36,58 @@ func (f *fakeLlmGRPCClient) GenerateAnswer(ctx context.Context, in *qav1.Generat
 		return f.generateFn(ctx, in, opts...)
 	}
 	return &qav1.GenerateAnswerReply{Answer: "ok"}, nil
+}
+
+func (f *fakeLlmGRPCClient) StreamGenerateAnswer(ctx context.Context, in *qav1.GenerateAnswerRequest, opts ...grpc.CallOption) (qav1.LlmService_StreamGenerateAnswerClient, error) {
+	if f.streamFn != nil {
+		return f.streamFn(ctx, in, opts...)
+	}
+	return nil, errors.New("stream generate not mocked")
+}
+
+func (f *fakeLlmGRPCClient) ExtractDocumentText(ctx context.Context, in *qav1.ExtractDocumentTextRequest, opts ...grpc.CallOption) (*qav1.ExtractDocumentTextReply, error) {
+	if f.extractFn != nil {
+		return f.extractFn(ctx, in, opts...)
+	}
+	return &qav1.ExtractDocumentTextReply{Text: ""}, nil
+}
+
+type fakeStreamGenerateClient struct {
+	chunks []*qav1.GenerateAnswerChunk
+	idx    int
+}
+
+func (f *fakeStreamGenerateClient) Recv() (*qav1.GenerateAnswerChunk, error) {
+	if f.idx >= len(f.chunks) {
+		return nil, io.EOF
+	}
+	chunk := f.chunks[f.idx]
+	f.idx++
+	return chunk, nil
+}
+
+func (f *fakeStreamGenerateClient) Header() (metadata.MD, error) {
+	return nil, nil
+}
+
+func (f *fakeStreamGenerateClient) Trailer() metadata.MD {
+	return nil
+}
+
+func (f *fakeStreamGenerateClient) CloseSend() error {
+	return nil
+}
+
+func (f *fakeStreamGenerateClient) Context() context.Context {
+	return context.Background()
+}
+
+func (f *fakeStreamGenerateClient) SendMsg(_ interface{}) error {
+	return nil
+}
+
+func (f *fakeStreamGenerateClient) RecvMsg(_ interface{}) error {
+	return nil
 }
 
 func TestClientEmbedTexts(t *testing.T) {
@@ -105,6 +161,40 @@ func TestClientGenerateAnswerFailsOnEmpty(t *testing.T) {
 	}
 }
 
+func TestClientGenerateAnswerStream(t *testing.T) {
+	c := New(&fakeLlmGRPCClient{
+		streamFn: func(_ context.Context, in *qav1.GenerateAnswerRequest, _ ...grpc.CallOption) (qav1.LlmService_StreamGenerateAnswerClient, error) {
+			if in.GetActiveProvider() != "ollama" {
+				t.Fatalf("unexpected provider: %s", in.GetActiveProvider())
+			}
+			return &fakeStreamGenerateClient{
+				chunks: []*qav1.GenerateAnswerChunk{
+					{Delta: "你", Done: false},
+					{Delta: "好", Done: false},
+					{Answer: "你好", Done: true},
+				},
+			}, nil
+		},
+	})
+
+	var got string
+	out, err := c.GenerateAnswerStream(context.Background(), corerpc.LLMGenerateRequest{
+		ActiveProvider: "ollama",
+	}, func(delta string) error {
+		got += delta
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream generate failed: %v", err)
+	}
+	if out != "你好" {
+		t.Fatalf("unexpected final answer: %q", out)
+	}
+	if got != "你好" {
+		t.Fatalf("unexpected streamed delta: %q", got)
+	}
+}
+
 func TestClientEmbedTextsCountMismatch(t *testing.T) {
 	c := New(&fakeLlmGRPCClient{
 		embedFn: func(_ context.Context, _ *qav1.EmbedTextsRequest, _ ...grpc.CallOption) (*qav1.EmbedTextsReply, error) {
@@ -125,5 +215,24 @@ func TestClientEmbedTextsPassesThroughErrors(t *testing.T) {
 	})
 	if _, err := c.EmbedTexts(context.Background(), []string{"a"}); err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestClientExtractDocumentText(t *testing.T) {
+	c := New(&fakeLlmGRPCClient{
+		extractFn: func(_ context.Context, in *qav1.ExtractDocumentTextRequest, _ ...grpc.CallOption) (*qav1.ExtractDocumentTextReply, error) {
+			if in.GetFilename() != "a.pdf" || in.GetMimeType() != "application/pdf" {
+				t.Fatalf("unexpected extract request: %+v", in)
+			}
+			return &qav1.ExtractDocumentTextReply{Text: "项目概述 内容"}, nil
+		},
+	})
+
+	out, err := c.ExtractDocumentText(context.Background(), "a.pdf", "application/pdf", []byte("raw"))
+	if err != nil {
+		t.Fatalf("extract failed: %v", err)
+	}
+	if out != "项目概述 内容" {
+		t.Fatalf("unexpected extract output: %q", out)
 	}
 }

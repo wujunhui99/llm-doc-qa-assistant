@@ -4,7 +4,7 @@
 - External API availability (`api-go`): 99.5%
 - Turn success rate: >= 98%
 - Auth API availability: 99.5%
-- `core-go-rpc -> llm-python-rpc` RPC success rate: >= 99%
+- `core-go-rpc -> agent-python-rpc` RPC success rate: >= 99%
 
 ## Reliability Controls (Implemented)
 - Stable external HTTP contract is isolated in `api-go`.

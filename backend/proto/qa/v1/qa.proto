@@ -210,6 +210,12 @@ message GenerateAnswerReply {
   string answer = 1;
 }
 
+message GenerateAnswerChunk {
+  string delta = 1;
+  string answer = 2;
+  bool done = 3;
+}
+
 message EmbeddingVector {
   repeated float values = 1;
 }
@@ -220,6 +226,16 @@ message EmbedTextsRequest {
 
 message EmbedTextsReply {
   repeated EmbeddingVector vectors = 1;
+}
+
+message ExtractDocumentTextRequest {
+  string filename = 1;
+  string mime_type = 2;
+  bytes content = 3;
+}
+
+message ExtractDocumentTextReply {
+  string text = 1;
 }
 
 service CoreService {
@@ -238,6 +254,7 @@ service CoreService {
   rpc ListThreads(ListThreadsRequest) returns (ListThreadsReply);
   rpc CreateThread(CreateThreadRequest) returns (ThreadReply);
   rpc CreateTurn(CreateTurnRequest) returns (CreateTurnReply);
+  rpc CreateTurnStream(CreateTurnRequest) returns (stream TurnItem);
   rpc GetTurn(GetTurnRequest) returns (GetTurnReply);
 
   rpc GetConfig(MeRequest) returns (ConfigReply);
@@ -247,5 +264,7 @@ service CoreService {
 service LlmService {
   rpc Health(Empty) returns (HealthReply);
   rpc EmbedTexts(EmbedTextsRequest) returns (EmbedTextsReply);
+  rpc ExtractDocumentText(ExtractDocumentTextRequest) returns (ExtractDocumentTextReply);
   rpc GenerateAnswer(GenerateAnswerRequest) returns (GenerateAnswerReply);
+  rpc StreamGenerateAnswer(GenerateAnswerRequest) returns (stream GenerateAnswerChunk);
 }

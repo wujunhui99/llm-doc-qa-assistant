@@ -75,3 +75,19 @@ func TestSetProviderAcceptsCaseInsensitiveSiliconFlow(t *testing.T) {
 		t.Fatalf("expected active provider siliconflow, got %q", provider.ActiveProvider)
 	}
 }
+
+func TestSetProviderSupportsOllama(t *testing.T) {
+	tmp := t.TempDir()
+	s, err := New(filepath.Join(tmp, "state.json"), filepath.Join(tmp, "audit.log"))
+	if err != nil {
+		t.Fatalf("init store failed: %v", err)
+	}
+
+	if err := s.SetProvider("ollama", "usr_1"); err != nil {
+		t.Fatalf("set provider failed: %v", err)
+	}
+	provider := s.GetProvider()
+	if provider.ActiveProvider != "ollama" {
+		t.Fatalf("expected active provider ollama, got %q", provider.ActiveProvider)
+	}
+}

@@ -72,17 +72,17 @@ func main() {
 	llmRPCAddr := cfg.LLMRPCAddr
 	llmConn, err := dialLLMRPC(llmRPCAddr, time.Duration(cfg.LLMRPCDialTimeoutSec)*time.Second)
 	if err != nil && !strings.HasPrefix(llmRPCAddr, "unix://") {
-		fallbackAddr := "unix:///tmp/llm-python-rpc.sock"
+		fallbackAddr := "unix:///tmp/agent-python-rpc.sock"
 		if _, statErr := os.Stat(strings.TrimPrefix(fallbackAddr, "unix://")); statErr == nil {
 			llmConn, err = dialLLMRPC(fallbackAddr, time.Duration(cfg.LLMRPCDialTimeoutSec)*time.Second)
 			if err == nil {
-				logger.Printf("llm rpc dial fallback: %s -> %s", llmRPCAddr, fallbackAddr)
+				logger.Printf("agent rpc dial fallback: %s -> %s", llmRPCAddr, fallbackAddr)
 				llmRPCAddr = fallbackAddr
 			}
 		}
 	}
 	if err != nil {
-		logger.Fatalf("connect llm rpc failed (%s): %v", cfg.LLMRPCAddr, err)
+		logger.Fatalf("connect agent rpc failed (%s): %v", cfg.LLMRPCAddr, err)
 	}
 	defer llmConn.Close()
 
@@ -99,7 +99,7 @@ func main() {
 			logger.Printf("vector search disabled: QDRANT_ENDPOINT or QDRANT_COLLECTION is empty")
 		} else {
 			coreServer = coreServer.WithVectorSearch(vectorClient)
-			logger.Printf("vector search enabled: collection=%s endpoint=%s llm_rpc=%s", cfg.QdrantCollection, cfg.QdrantEndpoint, llmRPCAddr)
+			logger.Printf("vector search enabled: collection=%s endpoint=%s agent_rpc=%s", cfg.QdrantCollection, cfg.QdrantEndpoint, llmRPCAddr)
 		}
 	}
 
@@ -166,8 +166,8 @@ func loadDotEnv(path string, logger *log.Logger) {
 func loadConfig() config {
 	return config{
 		CoreRPCAddr:          getenv("CORE_RPC_ADDR", ":19090"),
-		LLMRPCAddr:           getenv("LLM_RPC_ADDR", "127.0.0.1:51000"),
-		LLMRPCDialTimeoutSec: parseInt(getenv("LLM_RPC_DIAL_TIMEOUT_SECONDS", "8"), 8),
+		LLMRPCAddr:           getenvAny("127.0.0.1:51000", "AGENT_RPC_ADDR", "LLM_RPC_ADDR"),
+		LLMRPCDialTimeoutSec: parseInt(getenvAny("8", "AGENT_RPC_DIAL_TIMEOUT_SECONDS", "LLM_RPC_DIAL_TIMEOUT_SECONDS"), 8),
 		DataDir:              getenv("DATA_DIR", "./data"),
 		MySQLDSN:             getenv("MYSQL_DSN", "app:app123456@tcp(127.0.0.1:3306)/llm_doc_qa?parseTime=true&charset=utf8mb4&loc=Local"),
 		MinIOEndpoint:        getenv("MINIO_ENDPOINT", "127.0.0.1:9000"),
@@ -175,7 +175,7 @@ func loadConfig() config {
 		MinIOSecretKey:       getenv("MINIO_SECRET_KEY", "minioadmin123"),
 		MinIOBucket:          getenv("MINIO_BUCKET", "qa-documents"),
 		MinIOUseSSL:          parseBool(getenv("MINIO_USE_SSL", "false")),
-		VectorSearchEnabled:  parseBool(getenv("VECTOR_SEARCH_ENABLED", "false")),
+		VectorSearchEnabled:  parseBool(getenv("VECTOR_SEARCH_ENABLED", "true")),
 		QdrantEndpoint:       getenv("QDRANT_ENDPOINT", "http://127.0.0.1:6333"),
 		QdrantAPIKey:         getenv("QDRANT_API_KEY", ""),
 		QdrantCollection:     getenv("QDRANT_COLLECTION", "qa_chunks"),
@@ -186,6 +186,15 @@ func loadConfig() config {
 func getenv(key, def string) string {
 	if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
 		return v
+	}
+	return def
+}
+
+func getenvAny(def string, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := os.LookupEnv(key); ok && strings.TrimSpace(v) != "" {
+			return v
+		}
 	}
 	return def
 }

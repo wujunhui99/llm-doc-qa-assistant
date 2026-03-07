@@ -5,12 +5,14 @@ from typing import Iterable, List, Sequence
 
 import requests
 
+from app.agent.llm.base import BaseChatClient
 
 @dataclass
-class SiliconFlowClient:
+class SiliconFlowClient(BaseChatClient):
     api_base: str
     api_key: str
     timeout_seconds: int
+    provider: str = "siliconflow"
 
     def available(self) -> bool:
         return bool(self.api_key.strip())

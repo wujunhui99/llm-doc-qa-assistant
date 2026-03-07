@@ -14,6 +14,7 @@ Smart Document QA Assistant with:
 ### `api-go` (HTTP gateway)
 - External boundary for frontend.
 - Routes `/api/*` to core gRPC.
+- Supports synchronous turn creation and SSE streaming turn creation.
 - Default: `:8080`.
 
 ### `core-go-rpc` (domain service)
@@ -23,18 +24,23 @@ Smart Document QA Assistant with:
 - Scope resolution and retrieval pipeline orchestration.
 - Calls Python `LlmService` for:
   - embeddings (`EmbedTexts`)
-  - answer generation (`GenerateAnswer`)
+  - answer generation (`GenerateAnswer` / `StreamGenerateAnswer`)
 - Default: `:19090`.
 
-### `llm-python-rpc` (model service)
-- Model provider integration (SiliconFlow chat/embedding).
+### `agent-python-rpc` (model+rag service)
+- Chat provider integration via chat interface (`BaseChatClient`) + implementations.
+  - Current: SiliconFlow, Ollama
+  - Reserved: OpenAI/ChatGPT, Claude
+- Ollama chat timeout is configured independently (`OLLAMA_TIMEOUT_SECONDS`, default `15s`).
+- Embedding pipeline is fixed to SiliconFlow (not provider-routed).
 - Context rerank and prompt construction for answer generation.
+- Document text extraction/parsing (TXT/Markdown/PDF).
 - Default: `127.0.0.1:51000`.
 
 ## 3. Inter-service contracts
 - Proto source: `backend/proto/qa/v1/qa.proto`
 - `api-go -> core-go-rpc`: `qa.v1.CoreService`
-- `core-go-rpc -> llm-python-rpc`: `qa.v1.LlmService`
+- `core-go-rpc -> agent-python-rpc`: `qa.v1.LlmService`
 
 ## 4. Persistence
 - MySQL: users + sessions.
@@ -43,6 +49,7 @@ Smart Document QA Assistant with:
 - JSON state (transitional): documents/chunks/threads/turns/provider config.
 
 ## 5. Turn runtime flow
+### 5.1 Non-streaming
 1. Frontend calls `POST /api/threads/{thread_id}/turns`.
 2. `api-go` forwards to `core-go-rpc.CreateTurn`.
 3. Core authenticates and resolves scope.
@@ -51,6 +58,19 @@ Smart Document QA Assistant with:
   - lexical fallback when vector path unavailable/fails.
 5. Core calls Python `GenerateAnswer`.
 6. Core persists turn/items/citations and returns response.
+
+### 5.2 Streaming (SSE)
+1. Frontend calls `POST /api/threads/{thread_id}/turns/stream` with `Accept: text/event-stream`.
+2. `api-go` opens `core-go-rpc.CreateTurnStream` and forwards stream items as SSE events.
+3. Core authenticates, resolves scope, retrieves chunks, then calls Python `StreamGenerateAnswer`.
+4. Python streams answer deltas from provider (Ollama path streams native chunks).
+5. Core emits item events in order:
+  - `message`
+  - `retrieval`
+  - `delta` (0..N)
+  - `final`
+  - `done` (emitted by API gateway as stream terminator)
+6. Core persists final turn + streamed items after generation completes.
 
 ## 6. Document ingestion flow
 1. Upload validation (`.txt/.md/.markdown/.pdf`, size <= 10MB).
@@ -64,7 +84,7 @@ Smart Document QA Assistant with:
 
 ## 7. Security boundaries
 - `api-go` is public-facing.
-- `core-go-rpc` and `llm-python-rpc` are internal-only.
+- `core-go-rpc` and `agent-python-rpc` are internal-only.
 - Authorization and tenant boundaries are enforced in Core only.
 - Qdrant retrieval always includes owner filter and scope doc filtering.
 
@@ -73,6 +93,8 @@ Smart Document QA Assistant with:
   - HTTP -> Core gRPC,
   - Core -> Python LLM gRPC,
   - Core -> Qdrant.
+- Ollama path uses fail-fast timeout policy (default `15s`) to avoid long blocked requests.
+- Streaming turn path reduces long blocked HTTP waits by forwarding provider deltas as they arrive.
 - LLM provider failures return explicit service error (no mock fallback answer).
 - Retrieval degrades to lexical mode when vector path fails.
 

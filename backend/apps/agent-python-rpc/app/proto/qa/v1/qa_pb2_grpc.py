@@ -99,6 +99,11 @@ class CoreServiceStub(object):
                 request_serializer=qa_dot_v1_dot_qa__pb2.CreateTurnRequest.SerializeToString,
                 response_deserializer=qa_dot_v1_dot_qa__pb2.CreateTurnReply.FromString,
                 _registered_method=True)
+        self.CreateTurnStream = channel.unary_stream(
+                '/qa.v1.CoreService/CreateTurnStream',
+                request_serializer=qa_dot_v1_dot_qa__pb2.CreateTurnRequest.SerializeToString,
+                response_deserializer=qa_dot_v1_dot_qa__pb2.TurnItem.FromString,
+                _registered_method=True)
         self.GetTurn = channel.unary_unary(
                 '/qa.v1.CoreService/GetTurn',
                 request_serializer=qa_dot_v1_dot_qa__pb2.GetTurnRequest.SerializeToString,
@@ -197,6 +202,12 @@ class CoreServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateTurnStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetTurn(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -282,6 +293,11 @@ def add_CoreServiceServicer_to_server(servicer, server):
                     servicer.CreateTurn,
                     request_deserializer=qa_dot_v1_dot_qa__pb2.CreateTurnRequest.FromString,
                     response_serializer=qa_dot_v1_dot_qa__pb2.CreateTurnReply.SerializeToString,
+            ),
+            'CreateTurnStream': grpc.unary_stream_rpc_method_handler(
+                    servicer.CreateTurnStream,
+                    request_deserializer=qa_dot_v1_dot_qa__pb2.CreateTurnRequest.FromString,
+                    response_serializer=qa_dot_v1_dot_qa__pb2.TurnItem.SerializeToString,
             ),
             'GetTurn': grpc.unary_unary_rpc_method_handler(
                     servicer.GetTurn,
@@ -661,6 +677,33 @@ class CoreService(object):
             _registered_method=True)
 
     @staticmethod
+    def CreateTurnStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/qa.v1.CoreService/CreateTurnStream',
+            qa_dot_v1_dot_qa__pb2.CreateTurnRequest.SerializeToString,
+            qa_dot_v1_dot_qa__pb2.TurnItem.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def GetTurn(request,
             target,
             options=(),
@@ -761,10 +804,20 @@ class LlmServiceStub(object):
                 request_serializer=qa_dot_v1_dot_qa__pb2.EmbedTextsRequest.SerializeToString,
                 response_deserializer=qa_dot_v1_dot_qa__pb2.EmbedTextsReply.FromString,
                 _registered_method=True)
+        self.ExtractDocumentText = channel.unary_unary(
+                '/qa.v1.LlmService/ExtractDocumentText',
+                request_serializer=qa_dot_v1_dot_qa__pb2.ExtractDocumentTextRequest.SerializeToString,
+                response_deserializer=qa_dot_v1_dot_qa__pb2.ExtractDocumentTextReply.FromString,
+                _registered_method=True)
         self.GenerateAnswer = channel.unary_unary(
                 '/qa.v1.LlmService/GenerateAnswer',
                 request_serializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerRequest.SerializeToString,
                 response_deserializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerReply.FromString,
+                _registered_method=True)
+        self.StreamGenerateAnswer = channel.unary_stream(
+                '/qa.v1.LlmService/StreamGenerateAnswer',
+                request_serializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerRequest.SerializeToString,
+                response_deserializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerChunk.FromString,
                 _registered_method=True)
 
 
@@ -783,7 +836,19 @@ class LlmServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ExtractDocumentText(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GenerateAnswer(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamGenerateAnswer(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -802,10 +867,20 @@ def add_LlmServiceServicer_to_server(servicer, server):
                     request_deserializer=qa_dot_v1_dot_qa__pb2.EmbedTextsRequest.FromString,
                     response_serializer=qa_dot_v1_dot_qa__pb2.EmbedTextsReply.SerializeToString,
             ),
+            'ExtractDocumentText': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExtractDocumentText,
+                    request_deserializer=qa_dot_v1_dot_qa__pb2.ExtractDocumentTextRequest.FromString,
+                    response_serializer=qa_dot_v1_dot_qa__pb2.ExtractDocumentTextReply.SerializeToString,
+            ),
             'GenerateAnswer': grpc.unary_unary_rpc_method_handler(
                     servicer.GenerateAnswer,
                     request_deserializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerRequest.FromString,
                     response_serializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerReply.SerializeToString,
+            ),
+            'StreamGenerateAnswer': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamGenerateAnswer,
+                    request_deserializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerRequest.FromString,
+                    response_serializer=qa_dot_v1_dot_qa__pb2.GenerateAnswerChunk.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -873,6 +948,33 @@ class LlmService(object):
             _registered_method=True)
 
     @staticmethod
+    def ExtractDocumentText(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/qa.v1.LlmService/ExtractDocumentText',
+            qa_dot_v1_dot_qa__pb2.ExtractDocumentTextRequest.SerializeToString,
+            qa_dot_v1_dot_qa__pb2.ExtractDocumentTextReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
     def GenerateAnswer(request,
             target,
             options=(),
@@ -889,6 +991,33 @@ class LlmService(object):
             '/qa.v1.LlmService/GenerateAnswer',
             qa_dot_v1_dot_qa__pb2.GenerateAnswerRequest.SerializeToString,
             qa_dot_v1_dot_qa__pb2.GenerateAnswerReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamGenerateAnswer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/qa.v1.LlmService/StreamGenerateAnswer',
+            qa_dot_v1_dot_qa__pb2.GenerateAnswerRequest.SerializeToString,
+            qa_dot_v1_dot_qa__pb2.GenerateAnswerChunk.FromString,
             options,
             channel_credentials,
             insecure,

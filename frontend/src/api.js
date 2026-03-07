@@ -23,6 +23,77 @@ async function request(path, { method = 'GET', token, body, isFormData = false }
   return data
 }
 
+async function streamRequest(path, { method = 'POST', token, body, onEvent } = {}) {
+  const headers = { Accept: 'text/event-stream' }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+  if (body) {
+    headers['Content-Type'] = 'application/json'
+  }
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  })
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    const msg = data?.error?.message || `Request failed (${res.status})`
+    throw new Error(msg)
+  }
+  if (!res.body) {
+    throw new Error('Streaming response body is empty')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const emitFrame = (frame) => {
+    const lines = frame.split('\n')
+    let eventName = 'message'
+    const dataLines = []
+    for (const rawLine of lines) {
+      const line = rawLine.trimEnd()
+      if (!line) continue
+      if (line.startsWith('event:')) {
+        eventName = line.slice('event:'.length).trim()
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice('data:'.length).trim())
+      }
+    }
+    const dataText = dataLines.join('\n')
+    let payload = {}
+    if (dataText) {
+      try {
+        payload = JSON.parse(dataText)
+      } catch {
+        payload = { raw: dataText }
+      }
+    }
+    if (onEvent) onEvent(eventName, payload)
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let idx = buffer.indexOf('\n\n')
+    while (idx >= 0) {
+      const frame = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      if (frame.trim()) emitFrame(frame)
+      idx = buffer.indexOf('\n\n')
+    }
+  }
+
+  if (buffer.trim()) {
+    emitFrame(buffer)
+  }
+}
+
 export const api = {
   register: (email, password) => request('/api/auth/register', { method: 'POST', body: { email, password } }),
   login: (email, password) => request('/api/auth/login', { method: 'POST', body: { email, password } }),
@@ -54,6 +125,8 @@ export const api = {
   listThreads: (token) => request('/api/threads', { token }),
   createThread: (token, title) => request('/api/threads', { method: 'POST', token, body: { title } }),
   createTurn: (token, threadId, payload) => request(`/api/threads/${threadId}/turns`, { method: 'POST', token, body: payload }),
+  createTurnStream: (token, threadId, payload, onEvent) =>
+    streamRequest(`/api/threads/${threadId}/turns/stream`, { method: 'POST', token, body: payload, onEvent }),
 
   getConfig: (token) => request('/api/config', { token }),
   setConfig: (token, activeProvider) => request('/api/config', { method: 'PUT', token, body: { active_provider: activeProvider } })

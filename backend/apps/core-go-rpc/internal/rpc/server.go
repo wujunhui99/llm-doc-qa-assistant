@@ -64,7 +64,9 @@ type LLMGenerateRequest struct {
 
 type LLMService interface {
 	GenerateAnswer(ctx context.Context, req LLMGenerateRequest) (string, error)
+	GenerateAnswerStream(ctx context.Context, req LLMGenerateRequest, onDelta func(string) error) (string, error)
 	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
+	ExtractDocumentText(ctx context.Context, filename, mimeType string, content []byte) (string, error)
 }
 
 type VectorIndexer interface {
@@ -223,12 +225,12 @@ func (s *Server) UploadDocument(ctx context.Context, req *qav1.UploadDocumentReq
 		return nil, status.Error(codes.Internal, "failed to persist document")
 	}
 
-	text, err := ingest.ParseDocumentText(req.GetFilename(), req.GetMimeType(), req.GetContent())
+	text, err := s.extractDocumentText(ctx, req.GetFilename(), contentType, req.GetContent())
 	if err != nil {
 		doc.Status = "failed"
 		doc.LastUpdatedAt = time.Now().UTC()
 		_ = s.store.UpsertDocument(doc, nil)
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return nil, err
 	}
 
 	pieces := ingest.ChunkText(text, 700, 120)
@@ -478,7 +480,7 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 	}
 
 	activeProvider := s.store.GetProvider().ActiveProvider
-	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider)
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -544,6 +546,145 @@ func (s *Server) CreateTurn(ctx context.Context, req *qav1.CreateTurnRequest) (*
 		Citations: protoCitations,
 		Items:     protoItems,
 	}, nil
+}
+
+func (s *Server) CreateTurnStream(req *qav1.CreateTurnRequest, stream qav1.CoreService_CreateTurnStreamServer) error {
+	if req == nil {
+		return status.Error(codes.InvalidArgument, "request is required")
+	}
+	ctx := stream.Context()
+	user, err := s.authenticate(ctx, req.GetToken())
+	if err != nil {
+		return err
+	}
+
+	thread, err := s.getOwnedThread(req.GetThreadId(), user.ID)
+	if err != nil {
+		return err
+	}
+
+	message := strings.TrimSpace(req.GetMessage())
+	if message == "" {
+		return status.Error(codes.InvalidArgument, "message is required")
+	}
+
+	ownedDocs := s.store.ListDocumentsByOwner(user.ID)
+	scope, err := qa.ResolveScope(message, strings.ToLower(strings.TrimSpace(req.GetScopeType())), req.GetScopeDocIds(), ownedDocs)
+	if err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	selectedDocs := resolveSelectedDocs(scope, ownedDocs)
+	if scope.Type == "doc" && len(selectedDocs) == 0 {
+		return status.Error(codes.InvalidArgument, "selected documents do not exist or are not owned by current user")
+	}
+
+	chunkMap := make(map[string][]types.Chunk, len(selectedDocs))
+	for i, doc := range selectedDocs {
+		chunks := s.store.GetChunksForDoc(doc.ID)
+		updatedDoc, updatedChunks, repairErr := s.ensureDocumentChunksReady(ctx, user.ID, doc, chunks)
+		if repairErr != nil {
+			s.logger.Printf("document chunk repair warning: doc=%s err=%v", doc.ID, repairErr)
+		} else {
+			selectedDocs[i] = updatedDoc
+			chunks = updatedChunks
+		}
+		chunkMap[doc.ID] = chunks
+	}
+	retrieved := s.retrieveChunks(ctx, user.ID, scope.QuestionBody, selectedDocs, chunkMap, 5)
+	citations := buildCitations(retrieved)
+
+	previousTurns := s.store.ListTurnsByThread(thread.ID)
+	sort.Slice(previousTurns, func(i, j int) bool {
+		return previousTurns[i].CreatedAt.Before(previousTurns[j].CreatedAt)
+	})
+
+	now := time.Now().UTC()
+	turn := types.Turn{
+		ID:          types.NewID("turn"),
+		ThreadID:    thread.ID,
+		OwnerUserID: user.ID,
+		Question:    scope.QuestionBody,
+		Status:      "completed",
+		ScopeType:   scope.Type,
+		ScopeDocIDs: scope.DocIDs,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	messageItem := types.TurnItem{
+		ID:       types.NewID("item"),
+		TurnID:   turn.ID,
+		ItemType: "message",
+		Payload: map[string]interface{}{
+			"question":      turn.Question,
+			"scope_type":    turn.ScopeType,
+			"scope_doc_ids": turn.ScopeDocIDs,
+		},
+		CreatedAt: now,
+	}
+	if err := stream.Send(toProtoTurnItem(messageItem)); err != nil {
+		return err
+	}
+
+	retrievalItem := types.TurnItem{
+		ID:       types.NewID("item"),
+		TurnID:   turn.ID,
+		ItemType: "retrieval",
+		Payload: map[string]interface{}{
+			"count":     len(citations),
+			"citations": citations,
+		},
+		CreatedAt: now.Add(1 * time.Millisecond),
+	}
+	if err := stream.Send(toProtoTurnItem(retrievalItem)); err != nil {
+		return err
+	}
+
+	streamItems := []types.TurnItem{messageItem, retrievalItem}
+	activeProvider := s.store.GetProvider().ActiveProvider
+	answer, err := s.generateAnswer(ctx, user.ID, turn, retrieved, previousTurns, activeProvider, func(delta string) error {
+		piece := delta
+		if piece == "" {
+			return nil
+		}
+		item := types.TurnItem{
+			ID:       types.NewID("item"),
+			TurnID:   turn.ID,
+			ItemType: "delta",
+			Payload: map[string]interface{}{
+				"delta": piece,
+			},
+			CreatedAt: time.Now().UTC(),
+		}
+		streamItems = append(streamItems, item)
+		return stream.Send(toProtoTurnItem(item))
+	})
+	if err != nil {
+		return err
+	}
+	turn.Answer = answer
+
+	finalItem := types.TurnItem{
+		ID:       types.NewID("item"),
+		TurnID:   turn.ID,
+		ItemType: "final",
+		Payload: map[string]interface{}{
+			"answer":    answer,
+			"citations": citations,
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+	streamItems = append(streamItems, finalItem)
+
+	if err := s.store.CreateOrUpdateTurn(turn, streamItems); err != nil {
+		s.logger.Printf("save turn error: %v", err)
+		return status.Error(codes.Internal, "failed to save turn")
+	}
+	if err := stream.Send(toProtoTurnItem(finalItem)); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Server) GetTurn(ctx context.Context, req *qav1.GetTurnRequest) (*qav1.GetTurnReply, error) {
@@ -658,6 +799,7 @@ func (s *Server) generateAnswer(
 	retrieved []qa.ScoredChunk,
 	previousTurns []types.Turn,
 	activeProvider string,
+	onDelta func(string) error,
 ) (string, error) {
 	if s.llmService == nil {
 		return "", status.Error(codes.FailedPrecondition, "LLM service is not configured")
@@ -691,7 +833,13 @@ func (s *Server) generateAnswer(
 		llmReq.PreviousTurnAnswer = last.Answer
 	}
 
-	answer, err := s.llmService.GenerateAnswer(ctx, llmReq)
+	var answer string
+	var err error
+	if onDelta != nil {
+		answer, err = s.llmService.GenerateAnswerStream(ctx, llmReq, onDelta)
+	} else {
+		answer, err = s.llmService.GenerateAnswer(ctx, llmReq)
+	}
 	if err != nil {
 		s.logger.Printf("llm generate failed: %v", err)
 		msg := strings.ToLower(err.Error())
@@ -840,6 +988,9 @@ func shouldRepairChunks(doc types.Document, chunks []types.Chunk) bool {
 	if strings.Contains(lower, "endstream") || strings.Contains(lower, "endobj") {
 		return true
 	}
+	if ingest.LooksLikeCorruptedPDFText(sample) {
+		return true
+	}
 	return !ingest.IsReadableText(sample)
 }
 
@@ -870,7 +1021,7 @@ func (s *Server) ensureDocumentChunksReady(
 	if err != nil {
 		return doc, existing, fmt.Errorf("load source object failed: %w", err)
 	}
-	text, err := ingest.ParseDocumentText(doc.Name, contentType, data)
+	text, err := s.llmService.ExtractDocumentText(ctx, doc.Name, contentType, data)
 	if err != nil {
 		return doc, existing, fmt.Errorf("re-parse document failed: %w", err)
 	}
@@ -927,6 +1078,25 @@ func fallbackAnswer(question string, retrieved []qa.ScoredChunk, previousTurns [
 	}
 	b.WriteString("\n建议你结合以上引用继续追问细节。")
 	return b.String()
+}
+
+func (s *Server) extractDocumentText(ctx context.Context, filename, mimeType string, content []byte) (string, error) {
+	if s.llmService == nil {
+		return "", status.Error(codes.FailedPrecondition, "LLM service is not configured")
+	}
+
+	text, err := s.llmService.ExtractDocumentText(ctx, filename, mimeType, content)
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "invalidargument") {
+			return "", status.Error(codes.InvalidArgument, err.Error())
+		}
+		if strings.Contains(msg, "failedprecondition") {
+			return "", status.Error(codes.FailedPrecondition, err.Error())
+		}
+		return "", status.Error(codes.Unavailable, "document extraction failed: "+err.Error())
+	}
+	return text, nil
 }
 
 func (s *Server) indexDocumentVectors(ctx context.Context, ownerID string, doc types.Document, chunks []types.Chunk) error {

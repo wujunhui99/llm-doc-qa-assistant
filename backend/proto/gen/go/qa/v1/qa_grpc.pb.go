@@ -32,6 +32,7 @@ const (
 	CoreService_ListThreads_FullMethodName      = "/qa.v1.CoreService/ListThreads"
 	CoreService_CreateThread_FullMethodName     = "/qa.v1.CoreService/CreateThread"
 	CoreService_CreateTurn_FullMethodName       = "/qa.v1.CoreService/CreateTurn"
+	CoreService_CreateTurnStream_FullMethodName = "/qa.v1.CoreService/CreateTurnStream"
 	CoreService_GetTurn_FullMethodName          = "/qa.v1.CoreService/GetTurn"
 	CoreService_GetConfig_FullMethodName        = "/qa.v1.CoreService/GetConfig"
 	CoreService_SetConfig_FullMethodName        = "/qa.v1.CoreService/SetConfig"
@@ -54,6 +55,7 @@ type CoreServiceClient interface {
 	ListThreads(ctx context.Context, in *ListThreadsRequest, opts ...grpc.CallOption) (*ListThreadsReply, error)
 	CreateThread(ctx context.Context, in *CreateThreadRequest, opts ...grpc.CallOption) (*ThreadReply, error)
 	CreateTurn(ctx context.Context, in *CreateTurnRequest, opts ...grpc.CallOption) (*CreateTurnReply, error)
+	CreateTurnStream(ctx context.Context, in *CreateTurnRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TurnItem], error)
 	GetTurn(ctx context.Context, in *GetTurnRequest, opts ...grpc.CallOption) (*GetTurnReply, error)
 	GetConfig(ctx context.Context, in *MeRequest, opts ...grpc.CallOption) (*ConfigReply, error)
 	SetConfig(ctx context.Context, in *SetConfigRequest, opts ...grpc.CallOption) (*ConfigReply, error)
@@ -197,6 +199,25 @@ func (c *coreServiceClient) CreateTurn(ctx context.Context, in *CreateTurnReques
 	return out, nil
 }
 
+func (c *coreServiceClient) CreateTurnStream(ctx context.Context, in *CreateTurnRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TurnItem], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &CoreService_ServiceDesc.Streams[0], CoreService_CreateTurnStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[CreateTurnRequest, TurnItem]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CoreService_CreateTurnStreamClient = grpc.ServerStreamingClient[TurnItem]
+
 func (c *coreServiceClient) GetTurn(ctx context.Context, in *GetTurnRequest, opts ...grpc.CallOption) (*GetTurnReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetTurnReply)
@@ -244,6 +265,7 @@ type CoreServiceServer interface {
 	ListThreads(context.Context, *ListThreadsRequest) (*ListThreadsReply, error)
 	CreateThread(context.Context, *CreateThreadRequest) (*ThreadReply, error)
 	CreateTurn(context.Context, *CreateTurnRequest) (*CreateTurnReply, error)
+	CreateTurnStream(*CreateTurnRequest, grpc.ServerStreamingServer[TurnItem]) error
 	GetTurn(context.Context, *GetTurnRequest) (*GetTurnReply, error)
 	GetConfig(context.Context, *MeRequest) (*ConfigReply, error)
 	SetConfig(context.Context, *SetConfigRequest) (*ConfigReply, error)
@@ -295,6 +317,9 @@ func (UnimplementedCoreServiceServer) CreateThread(context.Context, *CreateThrea
 }
 func (UnimplementedCoreServiceServer) CreateTurn(context.Context, *CreateTurnRequest) (*CreateTurnReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateTurn not implemented")
+}
+func (UnimplementedCoreServiceServer) CreateTurnStream(*CreateTurnRequest, grpc.ServerStreamingServer[TurnItem]) error {
+	return status.Errorf(codes.Unimplemented, "method CreateTurnStream not implemented")
 }
 func (UnimplementedCoreServiceServer) GetTurn(context.Context, *GetTurnRequest) (*GetTurnReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTurn not implemented")
@@ -560,6 +585,17 @@ func _CoreService_CreateTurn_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CoreService_CreateTurnStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(CreateTurnRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CoreServiceServer).CreateTurnStream(m, &grpc.GenericServerStream[CreateTurnRequest, TurnItem]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type CoreService_CreateTurnStreamServer = grpc.ServerStreamingServer[TurnItem]
+
 func _CoreService_GetTurn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTurnRequest)
 	if err := dec(in); err != nil {
@@ -686,14 +722,22 @@ var CoreService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _CoreService_SetConfig_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "CreateTurnStream",
+			Handler:       _CoreService_CreateTurnStream_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "qa/v1/qa.proto",
 }
 
 const (
-	LlmService_Health_FullMethodName         = "/qa.v1.LlmService/Health"
-	LlmService_EmbedTexts_FullMethodName     = "/qa.v1.LlmService/EmbedTexts"
-	LlmService_GenerateAnswer_FullMethodName = "/qa.v1.LlmService/GenerateAnswer"
+	LlmService_Health_FullMethodName               = "/qa.v1.LlmService/Health"
+	LlmService_EmbedTexts_FullMethodName           = "/qa.v1.LlmService/EmbedTexts"
+	LlmService_ExtractDocumentText_FullMethodName  = "/qa.v1.LlmService/ExtractDocumentText"
+	LlmService_GenerateAnswer_FullMethodName       = "/qa.v1.LlmService/GenerateAnswer"
+	LlmService_StreamGenerateAnswer_FullMethodName = "/qa.v1.LlmService/StreamGenerateAnswer"
 )
 
 // LlmServiceClient is the client API for LlmService service.
@@ -702,7 +746,9 @@ const (
 type LlmServiceClient interface {
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthReply, error)
 	EmbedTexts(ctx context.Context, in *EmbedTextsRequest, opts ...grpc.CallOption) (*EmbedTextsReply, error)
+	ExtractDocumentText(ctx context.Context, in *ExtractDocumentTextRequest, opts ...grpc.CallOption) (*ExtractDocumentTextReply, error)
 	GenerateAnswer(ctx context.Context, in *GenerateAnswerRequest, opts ...grpc.CallOption) (*GenerateAnswerReply, error)
+	StreamGenerateAnswer(ctx context.Context, in *GenerateAnswerRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateAnswerChunk], error)
 }
 
 type llmServiceClient struct {
@@ -733,6 +779,16 @@ func (c *llmServiceClient) EmbedTexts(ctx context.Context, in *EmbedTextsRequest
 	return out, nil
 }
 
+func (c *llmServiceClient) ExtractDocumentText(ctx context.Context, in *ExtractDocumentTextRequest, opts ...grpc.CallOption) (*ExtractDocumentTextReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExtractDocumentTextReply)
+	err := c.cc.Invoke(ctx, LlmService_ExtractDocumentText_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *llmServiceClient) GenerateAnswer(ctx context.Context, in *GenerateAnswerRequest, opts ...grpc.CallOption) (*GenerateAnswerReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GenerateAnswerReply)
@@ -743,13 +799,34 @@ func (c *llmServiceClient) GenerateAnswer(ctx context.Context, in *GenerateAnswe
 	return out, nil
 }
 
+func (c *llmServiceClient) StreamGenerateAnswer(ctx context.Context, in *GenerateAnswerRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GenerateAnswerChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &LlmService_ServiceDesc.Streams[0], LlmService_StreamGenerateAnswer_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GenerateAnswerRequest, GenerateAnswerChunk]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LlmService_StreamGenerateAnswerClient = grpc.ServerStreamingClient[GenerateAnswerChunk]
+
 // LlmServiceServer is the server API for LlmService service.
 // All implementations must embed UnimplementedLlmServiceServer
 // for forward compatibility.
 type LlmServiceServer interface {
 	Health(context.Context, *Empty) (*HealthReply, error)
 	EmbedTexts(context.Context, *EmbedTextsRequest) (*EmbedTextsReply, error)
+	ExtractDocumentText(context.Context, *ExtractDocumentTextRequest) (*ExtractDocumentTextReply, error)
 	GenerateAnswer(context.Context, *GenerateAnswerRequest) (*GenerateAnswerReply, error)
+	StreamGenerateAnswer(*GenerateAnswerRequest, grpc.ServerStreamingServer[GenerateAnswerChunk]) error
 	mustEmbedUnimplementedLlmServiceServer()
 }
 
@@ -766,8 +843,14 @@ func (UnimplementedLlmServiceServer) Health(context.Context, *Empty) (*HealthRep
 func (UnimplementedLlmServiceServer) EmbedTexts(context.Context, *EmbedTextsRequest) (*EmbedTextsReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EmbedTexts not implemented")
 }
+func (UnimplementedLlmServiceServer) ExtractDocumentText(context.Context, *ExtractDocumentTextRequest) (*ExtractDocumentTextReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExtractDocumentText not implemented")
+}
 func (UnimplementedLlmServiceServer) GenerateAnswer(context.Context, *GenerateAnswerRequest) (*GenerateAnswerReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GenerateAnswer not implemented")
+}
+func (UnimplementedLlmServiceServer) StreamGenerateAnswer(*GenerateAnswerRequest, grpc.ServerStreamingServer[GenerateAnswerChunk]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamGenerateAnswer not implemented")
 }
 func (UnimplementedLlmServiceServer) mustEmbedUnimplementedLlmServiceServer() {}
 func (UnimplementedLlmServiceServer) testEmbeddedByValue()                    {}
@@ -826,6 +909,24 @@ func _LlmService_EmbedTexts_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LlmService_ExtractDocumentText_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExtractDocumentTextRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LlmServiceServer).ExtractDocumentText(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LlmService_ExtractDocumentText_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LlmServiceServer).ExtractDocumentText(ctx, req.(*ExtractDocumentTextRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _LlmService_GenerateAnswer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GenerateAnswerRequest)
 	if err := dec(in); err != nil {
@@ -844,6 +945,17 @@ func _LlmService_GenerateAnswer_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _LlmService_StreamGenerateAnswer_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GenerateAnswerRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(LlmServiceServer).StreamGenerateAnswer(m, &grpc.GenericServerStream[GenerateAnswerRequest, GenerateAnswerChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type LlmService_StreamGenerateAnswerServer = grpc.ServerStreamingServer[GenerateAnswerChunk]
+
 // LlmService_ServiceDesc is the grpc.ServiceDesc for LlmService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -860,10 +972,20 @@ var LlmService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _LlmService_EmbedTexts_Handler,
 		},
 		{
+			MethodName: "ExtractDocumentText",
+			Handler:    _LlmService_ExtractDocumentText_Handler,
+		},
+		{
 			MethodName: "GenerateAnswer",
 			Handler:    _LlmService_GenerateAnswer_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "StreamGenerateAnswer",
+			Handler:       _LlmService_StreamGenerateAnswer_Handler,
+			ServerStreams: true,
+		},
+	},
 	Metadata: "qa/v1/qa.proto",
 }

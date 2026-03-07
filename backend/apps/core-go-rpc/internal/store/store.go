@@ -20,7 +20,7 @@ type Store struct {
 	state     types.State
 }
 
-var defaultProviders = []string{"siliconflow", "mock", "openai", "claude", "local"}
+var defaultProviders = []string{"siliconflow", "mock", "openai", "chatgpt", "claude", "ollama", "local"}
 
 func New(statePath, auditPath string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {

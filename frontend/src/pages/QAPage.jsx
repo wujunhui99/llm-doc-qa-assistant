@@ -9,6 +9,7 @@ export function QAPage({ token }) {
   const [docIDs, setDocIDs] = useState([])
   const [message, setMessage] = useState('')
   const [turns, setTurns] = useState([])
+  const [streamingTurn, setStreamingTurn] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -74,10 +75,67 @@ export function QAPage({ token }) {
     setLoading(true)
     setError('')
     try {
-      const res = await api.createTurn(token, activeThreadId, payload)
-      setTurns((prev) => [res, ...prev])
+      const draft = {
+        turn: {
+          id: `local_${Date.now()}`,
+          question: message.trim(),
+          answer: '',
+          scope_type: scopeType
+        },
+        citations: [],
+        items: []
+      }
+      let streamError = ''
+      setStreamingTurn(draft)
+
+      await api.createTurnStream(token, activeThreadId, payload, (event, data) => {
+        if (event === 'error') {
+          streamError = data?.message || 'Streaming failed'
+          return
+        }
+
+        const payloadObj = data?.payload || {}
+        if (data?.turn_id) {
+          draft.turn.id = data.turn_id
+        }
+        if (event === 'message') {
+          draft.turn.question = payloadObj.question || draft.turn.question
+          draft.turn.scope_type = payloadObj.scope_type || draft.turn.scope_type
+        } else if (event === 'retrieval') {
+          draft.citations = Array.isArray(payloadObj.citations) ? payloadObj.citations : []
+        } else if (event === 'delta') {
+          const delta = payloadObj.delta || ''
+          if (delta) {
+            draft.turn.answer = `${draft.turn.answer}${delta}`
+          }
+        } else if (event === 'final') {
+          draft.turn.answer = payloadObj.answer || draft.turn.answer
+          draft.citations = Array.isArray(payloadObj.citations) ? payloadObj.citations : draft.citations
+        }
+        setStreamingTurn({
+          ...draft,
+          turn: { ...draft.turn },
+          citations: [...draft.citations]
+        })
+      })
+
+      if (streamError) {
+        throw new Error(streamError)
+      }
+
+      setTurns((prev) => [
+        {
+          ...draft,
+          turn: { ...draft.turn },
+          citations: [...draft.citations],
+          items: []
+        },
+        ...prev
+      ])
+      setStreamingTurn(null)
       setMessage('')
     } catch (err) {
+      setStreamingTurn(null)
       setError(err.message)
     } finally {
       setLoading(false)
@@ -137,7 +195,29 @@ export function QAPage({ token }) {
       {error ? <div className="message error">{error}</div> : null}
 
       <div className="turn-list">
-        {turns.length === 0 ? <p className="muted">No turns yet for this session.</p> : null}
+        {!streamingTurn && turns.length === 0 ? <p className="muted">No turns yet for this session.</p> : null}
+        {streamingTurn ? (
+          <article className="turn-card" key={streamingTurn.turn.id}>
+            <div className="turn-head">
+              <span>Q: {streamingTurn.turn.question}</span>
+              <span className="status status-ready">streaming</span>
+            </div>
+            <p className="turn-answer">{streamingTurn.turn.answer || '...'}</p>
+
+            <h4>Citations</h4>
+            {streamingTurn.citations?.length ? (
+              <ul>
+                {streamingTurn.citations.map((c) => (
+                  <li key={c.chunk_id}>
+                    <strong>{c.doc_name}</strong>#{c.chunk_index}: {c.excerpt}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">No citation found in this turn.</p>
+            )}
+          </article>
+        ) : null}
         {turns.map((entry) => (
           <article className="turn-card" key={entry.turn.id}>
             <div className="turn-head">
