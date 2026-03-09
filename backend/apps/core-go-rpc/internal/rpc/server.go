@@ -770,6 +770,43 @@ func (s *Server) GetTurn(ctx context.Context, req *qav1.GetTurnRequest) (*qav1.G
 	return &qav1.GetTurnReply{Turn: toProtoTurn(turn), Items: protoItems}, nil
 }
 
+func (s *Server) ListTurns(ctx context.Context, req *qav1.ListTurnsRequest) (*qav1.ListTurnsReply, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	user, err := s.authenticate(ctx, req.GetToken())
+	if err != nil {
+		return nil, err
+	}
+
+	thread, err := s.getOwnedThread(req.GetThreadId(), user.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	turns := s.store.ListTurnsByThread(thread.ID)
+	sort.SliceStable(turns, func(i, j int) bool {
+		if turns[i].CreatedAt.Equal(turns[j].CreatedAt) {
+			return turns[i].UpdatedAt.After(turns[j].UpdatedAt)
+		}
+		return turns[i].CreatedAt.After(turns[j].CreatedAt)
+	})
+
+	history := make([]*qav1.TurnHistory, 0, len(turns))
+	for _, turn := range turns {
+		items := s.store.GetTurnItems(turn.ID)
+		protoItems := make([]*qav1.TurnItem, 0, len(items))
+		for _, item := range items {
+			protoItems = append(protoItems, toProtoTurnItem(item))
+		}
+		history = append(history, &qav1.TurnHistory{
+			Turn:  toProtoTurn(turn),
+			Items: protoItems,
+		})
+	}
+	return &qav1.ListTurnsReply{Turns: history}, nil
+}
+
 func (s *Server) GetConfig(ctx context.Context, req *qav1.MeRequest) (*qav1.ConfigReply, error) {
 	user, err := s.authenticate(ctx, tokenFromMeReq(req))
 	if err != nil {

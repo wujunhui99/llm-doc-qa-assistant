@@ -3,10 +3,19 @@ import { api } from '../api'
 
 const providerLabels = {
   siliconflow: '硅基流动 (siliconflow)',
-  mock: 'Mock',
-  openai: 'OpenAI',
+  chatgpt: 'ChatGPT',
   claude: 'Claude',
-  local: 'Local'
+  ollama: 'Ollama',
+  vllm: 'vLLM'
+}
+
+const AVAILABLE_PROVIDER_ORDER = ['siliconflow', 'chatgpt']
+const UNAVAILABLE_PROVIDER_ORDER = ['claude', 'ollama', 'vllm']
+
+function normalizeProvider(name) {
+  const raw = (name || '').trim().toLowerCase()
+  if (raw === 'openai') return 'chatgpt'
+  return raw
 }
 
 export function SettingsPage({ token }) {
@@ -33,7 +42,7 @@ export function SettingsPage({ token }) {
     try {
       const res = await api.setConfig(token, provider)
       setConfig(res)
-      setMessage(`Active provider switched to ${provider}.`)
+      setMessage(`已切换到 ${providerLabels[provider] || provider}。`)
       setError('')
     } catch (err) {
       setError(err.message)
@@ -41,23 +50,44 @@ export function SettingsPage({ token }) {
     }
   }
 
+  const activeProvider = normalizeProvider(config?.active_provider || '')
+  const availableFromServer = new Set((config?.available || []).map((p) => normalizeProvider(p)))
+  const availableProviders = AVAILABLE_PROVIDER_ORDER.filter((p) => availableFromServer.has(p))
+
   return (
     <section className="panel">
       <h2>System Configuration</h2>
-      <p className="muted">Select the active provider adapter for new QA turns.</p>
+      <p className="muted">选择新对话默认使用的模型提供商。</p>
 
       {config ? (
-        <div className="provider-grid">
-          {config.available?.map((provider) => (
-            <button
-              key={provider}
-              className={config.active_provider === provider ? 'provider-btn active' : 'provider-btn'}
-              onClick={() => update(provider)}
-            >
-              {providerLabels[provider] || provider}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="provider-section">
+            <h3>可用</h3>
+            <div className="provider-grid">
+              {availableProviders.map((provider) => (
+                <button
+                  key={provider}
+                  className={activeProvider === provider ? 'provider-btn active' : 'provider-btn'}
+                  onClick={() => update(provider)}
+                >
+                  {providerLabels[provider] || provider}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="provider-section">
+            <h3>待扩展（不可用）</h3>
+            <p className="muted provider-note">这些选项仅展示规划状态，当前版本不能切换使用。</p>
+            <div className="provider-grid">
+              {UNAVAILABLE_PROVIDER_ORDER.map((provider) => (
+                <button key={provider} className="provider-btn provider-btn-disabled" disabled>
+                  {providerLabels[provider] || provider}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
       ) : (
         <p className="muted">Loading providers...</p>
       )}

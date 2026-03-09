@@ -124,6 +124,7 @@ export const api = {
 
   listThreads: (token) => request('/api/threads', { token }),
   createThread: (token, title) => request('/api/threads', { method: 'POST', token, body: { title } }),
+  listTurns: (token, threadId) => request(`/api/threads/${threadId}/turns`, { token }),
   createTurn: (token, threadId, payload) => request(`/api/threads/${threadId}/turns`, { method: 'POST', token, body: payload }),
   createTurnStream: (token, threadId, payload, onEvent) =>
     streamRequest(`/api/threads/${threadId}/turns/stream`, { method: 'POST', token, body: payload, onEvent }),

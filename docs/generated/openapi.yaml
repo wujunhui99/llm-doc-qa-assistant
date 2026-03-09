@@ -322,6 +322,21 @@ paths:
         required: true
         schema:
           type: string
+    get:
+      tags: [Threads]
+      summary: List turn history for a thread
+      operationId: listTurns
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Turn history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTurnsResponse'
+        default:
+          $ref: '#/components/responses/ErrorResponse'
     post:
       tags: [Threads]
       summary: Create turn (non-stream)
@@ -762,6 +777,26 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TurnItem'
+
+    TurnHistory:
+      type: object
+      required: [turn, items]
+      properties:
+        turn:
+          $ref: '#/components/schemas/Turn'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TurnItem'
+
+    ListTurnsResponse:
+      type: object
+      required: [turns]
+      properties:
+        turns:
+          type: array
+          items:
+            $ref: '#/components/schemas/TurnHistory'
 
     ConfigResponse:
       type: object

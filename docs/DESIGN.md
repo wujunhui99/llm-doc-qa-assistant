@@ -19,6 +19,9 @@ UI provides a consistent visual system across Auth, Document, QA, and Settings p
 - Citations always visible in QA turn cards.
 - Query composer supports inline `@` mention menu for document targeting (triggered by `@` directly, no leading-space requirement).
 - QA turn card shows retrieval decision state (`used/skipped + reason`) from stream events.
+- Session switching keeps conversation continuity:
+  - cached turns render immediately when returning to QA page,
+  - backend history replaces cache after fetch completes.
 - Ownership-visible document table tied to current authenticated user.
 - Deployed app uses same-origin API route (`/api`) through frontend gateway proxy, avoiding localhost-target confusion on client devices.
 

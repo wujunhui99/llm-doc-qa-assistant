@@ -716,3 +716,72 @@ func TestRetrieveChunksFallsBackToLexicalWhenVectorSearchFails(t *testing.T) {
 		t.Fatalf("unexpected fallback chunk: %+v", got[0])
 	}
 }
+
+func TestListTurnsReturnsThreadHistoryInDescOrder(t *testing.T) {
+	tmp := t.TempDir()
+	statePath := filepath.Join(tmp, "state.json")
+	auditPath := filepath.Join(tmp, "audit.log")
+	st, err := store.New(statePath, auditPath)
+	if err != nil {
+		t.Fatalf("init store: %v", err)
+	}
+
+	user := domainauth.User{ID: "usr_1", Email: "a@example.com"}
+	thread := types.Thread{ID: "th_1", OwnerUserID: user.ID, Title: "demo", CreatedAt: time.Now().Add(-10 * time.Minute)}
+	if err := st.CreateThread(thread); err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+
+	older := types.Turn{
+		ID:          "turn_1",
+		ThreadID:    thread.ID,
+		OwnerUserID: user.ID,
+		Question:    "q1",
+		Answer:      "a1",
+		Status:      "done",
+		ScopeType:   "all",
+		CreatedAt:   time.Now().Add(-2 * time.Minute),
+		UpdatedAt:   time.Now().Add(-2 * time.Minute),
+	}
+	newer := types.Turn{
+		ID:          "turn_2",
+		ThreadID:    thread.ID,
+		OwnerUserID: user.ID,
+		Question:    "q2",
+		Answer:      "a2",
+		Status:      "done",
+		ScopeType:   "all",
+		CreatedAt:   time.Now().Add(-1 * time.Minute),
+		UpdatedAt:   time.Now().Add(-1 * time.Minute),
+	}
+	if err := st.CreateOrUpdateTurn(older, []types.TurnItem{{ID: "i_1", TurnID: older.ID, ItemType: "final", Payload: map[string]interface{}{"answer": "a1"}, CreatedAt: older.CreatedAt}}); err != nil {
+		t.Fatalf("save older turn: %v", err)
+	}
+	if err := st.CreateOrUpdateTurn(newer, []types.TurnItem{{ID: "i_2", TurnID: newer.ID, ItemType: "final", Payload: map[string]interface{}{"answer": "a2"}, CreatedAt: newer.CreatedAt}}); err != nil {
+		t.Fatalf("save newer turn: %v", err)
+	}
+
+	srv := &Server{
+		store:       st,
+		authService: fakeAuthUseCase{user: user},
+		objectStore: fakeObjectStore{},
+		logger:      log.New(io.Discard, "", 0),
+	}
+
+	out, err := srv.ListTurns(context.Background(), &qav1.ListTurnsRequest{
+		Token:    "token-123",
+		ThreadId: thread.ID,
+	})
+	if err != nil {
+		t.Fatalf("list turns failed: %v", err)
+	}
+	if len(out.GetTurns()) != 2 {
+		t.Fatalf("expected 2 turns, got %d", len(out.GetTurns()))
+	}
+	if out.GetTurns()[0].GetTurn().GetId() != "turn_2" {
+		t.Fatalf("expected newest turn first, got %s", out.GetTurns()[0].GetTurn().GetId())
+	}
+	if len(out.GetTurns()[0].GetItems()) == 0 {
+		t.Fatalf("expected turn items to be returned")
+	}
+}

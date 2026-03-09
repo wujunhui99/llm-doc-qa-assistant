@@ -5,6 +5,92 @@ function stripDocMentions(text) {
   return text.replace(/@doc\(([^)]+)\)/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+function turnCacheStorageKey(token) {
+  const scope = (token || '').slice(0, 24) || 'anon'
+  return `qa_turn_cache_v1:${scope}`
+}
+
+function activeThreadStorageKey(token) {
+  const scope = (token || '').slice(0, 24) || 'anon'
+  return `qa_active_thread_v1:${scope}`
+}
+
+function loadCachedTurns(token, threadId) {
+  if (!threadId) return null
+  try {
+    const raw = localStorage.getItem(turnCacheStorageKey(token))
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    const rows = parsed?.[threadId]
+    return Array.isArray(rows) ? rows : null
+  } catch {
+    return null
+  }
+}
+
+function saveCachedTurns(token, threadId, turns) {
+  if (!threadId) return
+  try {
+    const key = turnCacheStorageKey(token)
+    const raw = localStorage.getItem(key)
+    const parsed = raw ? JSON.parse(raw) : {}
+    parsed[threadId] = Array.isArray(turns) ? turns.slice(0, 100) : []
+    localStorage.setItem(key, JSON.stringify(parsed))
+  } catch {
+    // Ignore cache write errors.
+  }
+}
+
+function loadActiveThread(token) {
+  try {
+    return localStorage.getItem(activeThreadStorageKey(token)) || ''
+  } catch {
+    return ''
+  }
+}
+
+function saveActiveThread(token, threadId) {
+  try {
+    const key = activeThreadStorageKey(token)
+    if (threadId) {
+      localStorage.setItem(key, threadId)
+    } else {
+      localStorage.removeItem(key)
+    }
+  } catch {
+    // Ignore cache write errors.
+  }
+}
+
+function normalizeTurnRows(rows) {
+  const out = []
+  const list = Array.isArray(rows) ? rows : []
+  for (const row of list) {
+    const turn = row?.turn && typeof row.turn === 'object' ? row.turn : null
+    if (!turn) continue
+    const items = Array.isArray(row?.items) ? row.items : []
+    let citations = []
+    let retrievalDecision = null
+    for (const item of items) {
+      const type = item?.item_type || ''
+      const payload = item?.payload && typeof item.payload === 'object' ? item.payload : {}
+      if (type === 'retrieval_decision') {
+        retrievalDecision = payload
+      }
+      if ((type === 'retrieval' || type === 'final') && Array.isArray(payload.citations)) {
+        citations = payload.citations
+      }
+    }
+    out.push({
+      turn,
+      citations,
+      retrieval_decision: retrievalDecision,
+      items
+    })
+  }
+  return out
+}
+
 export function QAPage({ token }) {
   const [documents, setDocuments] = useState([])
   const [threads, setThreads] = useState([])
@@ -67,8 +153,15 @@ export function QAPage({ token }) {
       setDocuments(docRes.documents || [])
       const existingThreads = threadRes.threads || []
       setThreads(existingThreads)
-      if (existingThreads.length) {
+      const cachedActive = loadActiveThread(token)
+      const hasCached = cachedActive && existingThreads.some((thread) => thread.id === cachedActive)
+      if (hasCached) {
+        setActiveThreadId(cachedActive)
+      } else if (existingThreads.length) {
         setActiveThreadId(existingThreads[0].id)
+      } else {
+        setActiveThreadId('')
+        setTurns([])
       }
       setError('')
     } catch (err) {
@@ -81,6 +174,53 @@ export function QAPage({ token }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
+  useEffect(() => {
+    saveActiveThread(token, activeThreadId)
+  }, [token, activeThreadId])
+
+  useEffect(() => {
+    saveCachedTurns(token, activeThreadId, turns)
+  }, [token, activeThreadId, turns])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadTurns = async () => {
+      if (!activeThreadId) {
+        setTurns([])
+        setStreamingTurn(null)
+        return
+      }
+
+      const cached = loadCachedTurns(token, activeThreadId)
+      if (cached) {
+        setTurns(cached)
+      } else {
+        setTurns([])
+      }
+      setStreamingTurn(null)
+
+      try {
+        const res = await api.listTurns(token, activeThreadId)
+        if (cancelled) return
+        const normalized = normalizeTurnRows(res.turns || [])
+        setTurns(normalized)
+        saveCachedTurns(token, activeThreadId, normalized)
+        setError('')
+      } catch (err) {
+        if (cancelled) return
+        if (!cached) {
+          setTurns([])
+        }
+        setError(err.message)
+      }
+    }
+
+    loadTurns()
+    return () => {
+      cancelled = true
+    }
+  }, [token, activeThreadId])
+
   const createThread = async () => {
     try {
       const res = await api.createThread(token, `Session ${new Date().toLocaleTimeString()}`)
@@ -88,6 +228,7 @@ export function QAPage({ token }) {
       setThreads(next)
       setActiveThreadId(res.thread.id)
       setTurns([])
+      saveCachedTurns(token, res.thread.id, [])
     } catch (err) {
       setError(err.message)
     }

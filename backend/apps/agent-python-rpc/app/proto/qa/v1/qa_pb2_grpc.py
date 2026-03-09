@@ -104,6 +104,11 @@ class CoreServiceStub(object):
                 request_serializer=qa_dot_v1_dot_qa__pb2.CreateTurnRequest.SerializeToString,
                 response_deserializer=qa_dot_v1_dot_qa__pb2.TurnItem.FromString,
                 _registered_method=True)
+        self.ListTurns = channel.unary_unary(
+                '/qa.v1.CoreService/ListTurns',
+                request_serializer=qa_dot_v1_dot_qa__pb2.ListTurnsRequest.SerializeToString,
+                response_deserializer=qa_dot_v1_dot_qa__pb2.ListTurnsReply.FromString,
+                _registered_method=True)
         self.GetTurn = channel.unary_unary(
                 '/qa.v1.CoreService/GetTurn',
                 request_serializer=qa_dot_v1_dot_qa__pb2.GetTurnRequest.SerializeToString,
@@ -208,6 +213,12 @@ class CoreServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListTurns(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def GetTurn(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -298,6 +309,11 @@ def add_CoreServiceServicer_to_server(servicer, server):
                     servicer.CreateTurnStream,
                     request_deserializer=qa_dot_v1_dot_qa__pb2.CreateTurnRequest.FromString,
                     response_serializer=qa_dot_v1_dot_qa__pb2.TurnItem.SerializeToString,
+            ),
+            'ListTurns': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTurns,
+                    request_deserializer=qa_dot_v1_dot_qa__pb2.ListTurnsRequest.FromString,
+                    response_serializer=qa_dot_v1_dot_qa__pb2.ListTurnsReply.SerializeToString,
             ),
             'GetTurn': grpc.unary_unary_rpc_method_handler(
                     servicer.GetTurn,
@@ -693,6 +709,33 @@ class CoreService(object):
             '/qa.v1.CoreService/CreateTurnStream',
             qa_dot_v1_dot_qa__pb2.CreateTurnRequest.SerializeToString,
             qa_dot_v1_dot_qa__pb2.TurnItem.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListTurns(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/qa.v1.CoreService/ListTurns',
+            qa_dot_v1_dot_qa__pb2.ListTurnsRequest.SerializeToString,
+            qa_dot_v1_dot_qa__pb2.ListTurnsReply.FromString,
             options,
             channel_credentials,
             insecure,

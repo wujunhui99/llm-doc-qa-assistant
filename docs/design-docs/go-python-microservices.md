@@ -4,6 +4,7 @@
 - `api-go`:
   - Frontend HTTP boundary (`/api/*`).
   - Request/response shaping and auth header pass-through.
+  - Session history endpoint (`GET /api/threads/{thread_id}/turns`) for QA page restore.
   - SSE bridge for streaming turns (`POST /api/threads/{thread_id}/turns/stream`).
   - Calls `core-go-rpc` only.
 - `core-go-rpc`:
@@ -25,6 +26,7 @@
 - `api-go -> core-go-rpc`: `qa.v1.CoreService`.
 - `core-go-rpc -> agent-python-rpc`: `qa.v1.LlmService`.
 - Added RPC methods:
+  - `ListTurns` (CoreService, unary; returns thread turn history + turn items)
   - `ExtractDocumentText`
   - `EmbedTexts`
   - `GenerateAnswer`

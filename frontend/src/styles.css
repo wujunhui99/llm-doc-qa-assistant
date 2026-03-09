@@ -351,6 +351,18 @@ td {
   gap: 0.6rem;
 }
 
+.provider-section + .provider-section {
+  margin-top: 1rem;
+}
+
+.provider-section h3 {
+  margin: 0 0 0.45rem;
+}
+
+.provider-note {
+  margin: 0 0 0.6rem;
+}
+
 .provider-btn {
   border: 1px solid var(--line);
   background: white;
@@ -361,6 +373,12 @@ td {
   background: linear-gradient(135deg, var(--accent), #2b938c);
   color: #f3ffff;
   border-color: transparent;
+}
+
+.provider-btn.provider-btn-disabled {
+  border-style: dashed;
+  background: #f3f7f8;
+  color: var(--muted);
 }
 
 @media (max-width: 768px) {

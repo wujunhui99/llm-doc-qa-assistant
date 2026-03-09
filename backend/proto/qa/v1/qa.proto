@@ -175,6 +175,20 @@ message GetTurnReply {
   repeated TurnItem items = 2;
 }
 
+message ListTurnsRequest {
+  string token = 1;
+  string thread_id = 2;
+}
+
+message TurnHistory {
+  Turn turn = 1;
+  repeated TurnItem items = 2;
+}
+
+message ListTurnsReply {
+  repeated TurnHistory turns = 1;
+}
+
 message ConfigReply {
   string active_provider = 1;
   repeated string available = 2;
@@ -258,6 +272,7 @@ service CoreService {
   rpc CreateThread(CreateThreadRequest) returns (ThreadReply);
   rpc CreateTurn(CreateTurnRequest) returns (CreateTurnReply);
   rpc CreateTurnStream(CreateTurnRequest) returns (stream TurnItem);
+  rpc ListTurns(ListTurnsRequest) returns (ListTurnsReply);
   rpc GetTurn(GetTurnRequest) returns (GetTurnReply);
 
   rpc GetConfig(MeRequest) returns (ConfigReply);

@@ -9,6 +9,8 @@
   - delete with confirmation.
 - Agent QA page:
   - thread creation/switching,
+  - session history loading from backend on session switch (`GET /api/threads/{thread_id}/turns`),
+  - local cache restore for QA turns when leaving/re-entering page,
   - query composer (`@` trigger does not require leading whitespace),
   - inline `@` doc mention picker (inserts `@doc(...)` tokens),
   - automatic retrieval mode (`auto`) when no explicit `@doc` mention is provided,
@@ -28,7 +30,10 @@
   - `pages/SettingsPage.jsx`
 - State model:
   - token in `localStorage` (`qa_token`),
-  - user/profile loaded via `/api/auth/me`.
+  - user/profile loaded via `/api/auth/me`,
+  - QA page cache keys:
+    - active thread id per token scope,
+    - turn history per thread per token scope.
 
 ## Interaction Guarantees
 - Access-aware rendering:
@@ -41,6 +46,9 @@
   - with `@doc(...)` mention: send `scope_type=doc` + selected `scope_doc_ids` (forced scoped retrieval).
 - Streaming UX:
   - show retrieval-decision note per turn from `retrieval_decision` event payload (`use_retrieval`, `reason`, `retrieval_query`).
+- Session switch UX:
+  - immediately paints cached turns if available,
+  - then refreshes turns from backend and replaces stale cache.
 - Mobile + desktop supported by responsive CSS rules.
 - Deployed frontend defaults to same-origin API calls (`/api/*`) instead of hardcoded `localhost`, so cross-device access works.
 

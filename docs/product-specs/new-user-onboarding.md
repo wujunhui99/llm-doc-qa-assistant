@@ -16,6 +16,7 @@ A first-time user can create an account, upload personal documents (TXT/Markdown
 - `POST /api/auth/login`
 - `POST /api/documents/upload`
 - `POST /api/threads`
+- `GET /api/threads/{thread_id}/turns` (history restore when switching session)
 - `POST /api/threads/{thread_id}/turns`
 - `POST /api/threads/{thread_id}/turns/stream` (SSE incremental answer path)
 
@@ -25,4 +26,5 @@ A first-time user can create an account, upload personal documents (TXT/Markdown
 - At least one citation is shown for evidence-backed responses.
 - No data from other users appears in retrieval context or citations.
 - For streaming turn path, UI renders incremental `delta` answer chunks before `final` event completion.
+- When user leaves QA page and comes back, previous turns are restored (cache first, backend history refresh after).
 - In deployed container mode, frontend API requests use same-origin `/api/*` routing (not hardcoded `localhost`), so onboarding works from remote client devices.

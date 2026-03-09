@@ -52,17 +52,18 @@ Smart Document QA Assistant with:
 
 ## 5. Turn runtime flow
 ### 5.1 Non-streaming
-1. Frontend calls `POST /api/threads/{thread_id}/turns`.
-2. `api-go` forwards to `core-go-rpc.CreateTurn`.
-3. Core authenticates and resolves scope.
-4. Core decides retrieval path:
+1. Frontend loads thread history via `GET /api/threads/{thread_id}/turns` when entering/switching session.
+2. Frontend creates new turn with `POST /api/threads/{thread_id}/turns`.
+3. `api-go` forwards to `core-go-rpc.CreateTurn`.
+4. Core authenticates and resolves scope.
+5. Core decides retrieval path:
   - `@doc`: force retrieval,
   - `auto`: rule-based gate first, LLM route mode fallback (`scope_type=route`).
-5. If retrieval enabled, core retrieves chunks using route query keywords:
+6. If retrieval enabled, core retrieves chunks using route query keywords:
   - vector retrieval preferred (Qdrant + `EmbedTexts`)
   - lexical fallback when vector path unavailable/fails.
-6. Core calls Python `GenerateAnswer`.
-7. Core persists turn/items/citations and returns response.
+7. Core calls Python `GenerateAnswer`.
+8. Core persists turn/items/citations and returns response.
 
 ### 5.2 Streaming (SSE)
 1. Frontend calls `POST /api/threads/{thread_id}/turns/stream` with `Accept: text/event-stream`.

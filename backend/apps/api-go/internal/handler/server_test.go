@@ -34,6 +34,7 @@ type mockCoreClient struct {
 	createThreadFn     func(ctx context.Context, in *qav1.CreateThreadRequest, opts ...grpc.CallOption) (*qav1.ThreadReply, error)
 	createTurnFn       func(ctx context.Context, in *qav1.CreateTurnRequest, opts ...grpc.CallOption) (*qav1.CreateTurnReply, error)
 	createTurnStreamFn func(ctx context.Context, in *qav1.CreateTurnRequest, opts ...grpc.CallOption) (qav1.CoreService_CreateTurnStreamClient, error)
+	listTurnsFn        func(ctx context.Context, in *qav1.ListTurnsRequest, opts ...grpc.CallOption) (*qav1.ListTurnsReply, error)
 	getTurnFn          func(ctx context.Context, in *qav1.GetTurnRequest, opts ...grpc.CallOption) (*qav1.GetTurnReply, error)
 	getConfigFn        func(ctx context.Context, in *qav1.MeRequest, opts ...grpc.CallOption) (*qav1.ConfigReply, error)
 	setConfigFn        func(ctx context.Context, in *qav1.SetConfigRequest, opts ...grpc.CallOption) (*qav1.ConfigReply, error)
@@ -135,6 +136,13 @@ func (m *mockCoreClient) CreateTurnStream(ctx context.Context, in *qav1.CreateTu
 		return m.createTurnStreamFn(ctx, in, opts...)
 	}
 	return nil, status.Error(codes.Unimplemented, "create turn stream not mocked")
+}
+
+func (m *mockCoreClient) ListTurns(ctx context.Context, in *qav1.ListTurnsRequest, opts ...grpc.CallOption) (*qav1.ListTurnsReply, error) {
+	if m.listTurnsFn != nil {
+		return m.listTurnsFn(ctx, in, opts...)
+	}
+	return nil, status.Error(codes.Unimplemented, "list turns not mocked")
 }
 
 func (m *mockCoreClient) GetTurn(ctx context.Context, in *qav1.GetTurnRequest, opts ...grpc.CallOption) (*qav1.GetTurnReply, error) {
@@ -335,6 +343,60 @@ func TestCreateTurnForcesThinkModeDisabled(t *testing.T) {
 
 	if resp.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+func TestListTurnsReturnsHistory(t *testing.T) {
+	core := &mockCoreClient{
+		listTurnsFn: func(_ context.Context, in *qav1.ListTurnsRequest, _ ...grpc.CallOption) (*qav1.ListTurnsReply, error) {
+			if in.GetToken() != "token-123" {
+				t.Fatalf("expected token token-123, got %s", in.GetToken())
+			}
+			if in.GetThreadId() != "th_1" {
+				t.Fatalf("expected thread th_1, got %s", in.GetThreadId())
+			}
+			return &qav1.ListTurnsReply{
+				Turns: []*qav1.TurnHistory{
+					{
+						Turn: &qav1.Turn{
+							Id:       "turn_1",
+							ThreadId: "th_1",
+							Question: "q1",
+							Answer:   "a1",
+						},
+						Items: []*qav1.TurnItem{
+							{
+								Id:          "item_1",
+								TurnId:      "turn_1",
+								ItemType:    "retrieval_decision",
+								PayloadJson: `{"use_retrieval":true,"reason":"rule"}`,
+							},
+						},
+					},
+				},
+			}, nil
+		},
+	}
+	srv := NewServer(core, log.New(io.Discard, "", 0))
+	h := srv.Routes()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/th_1/turns", nil)
+	req.Header.Set("Authorization", "Bearer token-123")
+	resp := httptest.NewRecorder()
+	h.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	body := decodeBody(t, resp.Body.Bytes())
+	rows, ok := body["turns"].([]interface{})
+	if !ok || len(rows) != 1 {
+		t.Fatalf("expected turns length 1, got %#v", body["turns"])
+	}
+	first, _ := rows[0].(map[string]interface{})
+	turn, _ := first["turn"].(map[string]interface{})
+	if turn["id"] != "turn_1" {
+		t.Fatalf("expected turn_1, got %v", turn["id"])
 	}
 }
 

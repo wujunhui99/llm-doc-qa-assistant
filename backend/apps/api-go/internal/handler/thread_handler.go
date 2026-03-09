@@ -65,6 +65,10 @@ func (s *Server) handleThreadsSubRoutes(w http.ResponseWriter, r *http.Request) 
 	}
 	threadID := parts[0]
 
+	if len(parts) == 2 && parts[1] == "turns" && r.Method == http.MethodGet {
+		s.handleListTurns(w, r, threadID)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "turns" && r.Method == http.MethodPost {
 		s.handleCreateTurn(w, r, threadID)
 		return
@@ -117,6 +121,28 @@ func (s *Server) handleCreateTurn(w http.ResponseWriter, r *http.Request, thread
 		"citations": citations,
 		"items":     items,
 	})
+}
+
+func (s *Server) handleListTurns(w http.ResponseWriter, r *http.Request, threadID string) {
+	token := middleware.TokenFromContext(r.Context())
+	resp, err := s.threadLogic.ListTurns(r.Context(), token, threadID)
+	if err != nil {
+		writeGRPCError(w, err)
+		return
+	}
+
+	turns := make([]map[string]interface{}, 0, len(resp.GetTurns()))
+	for _, row := range resp.GetTurns() {
+		items := make([]map[string]interface{}, 0, len(row.GetItems()))
+		for _, item := range row.GetItems() {
+			items = append(items, protoTurnItemMap(item))
+		}
+		turns = append(turns, map[string]interface{}{
+			"turn":  protoTurnMap(row.GetTurn()),
+			"items": items,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"turns": turns})
 }
 
 func (s *Server) handleTurnStream(w http.ResponseWriter, r *http.Request, threadID string, turnID string) {

@@ -42,6 +42,12 @@ func (l *ThreadLogic) CreateTurn(ctx context.Context, token, threadID, message, 
 	})
 }
 
+func (l *ThreadLogic) ListTurns(ctx context.Context, token, threadID string) (*qav1.ListTurnsReply, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	return l.svcCtx.Core.ListTurns(ctx, &qav1.ListTurnsRequest{Token: token, ThreadId: threadID})
+}
+
 func (l *ThreadLogic) CreateTurnStream(ctx context.Context, token, threadID, message, scopeType string, scopeDocIDs []string, thinkMode bool) (qav1.CoreService_CreateTurnStreamClient, error) {
 	_ = thinkMode
 	return l.svcCtx.Core.CreateTurnStream(ctx, &qav1.CreateTurnRequest{

@@ -33,6 +33,7 @@ const (
 	CoreService_CreateThread_FullMethodName     = "/qa.v1.CoreService/CreateThread"
 	CoreService_CreateTurn_FullMethodName       = "/qa.v1.CoreService/CreateTurn"
 	CoreService_CreateTurnStream_FullMethodName = "/qa.v1.CoreService/CreateTurnStream"
+	CoreService_ListTurns_FullMethodName        = "/qa.v1.CoreService/ListTurns"
 	CoreService_GetTurn_FullMethodName          = "/qa.v1.CoreService/GetTurn"
 	CoreService_GetConfig_FullMethodName        = "/qa.v1.CoreService/GetConfig"
 	CoreService_SetConfig_FullMethodName        = "/qa.v1.CoreService/SetConfig"
@@ -56,6 +57,7 @@ type CoreServiceClient interface {
 	CreateThread(ctx context.Context, in *CreateThreadRequest, opts ...grpc.CallOption) (*ThreadReply, error)
 	CreateTurn(ctx context.Context, in *CreateTurnRequest, opts ...grpc.CallOption) (*CreateTurnReply, error)
 	CreateTurnStream(ctx context.Context, in *CreateTurnRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TurnItem], error)
+	ListTurns(ctx context.Context, in *ListTurnsRequest, opts ...grpc.CallOption) (*ListTurnsReply, error)
 	GetTurn(ctx context.Context, in *GetTurnRequest, opts ...grpc.CallOption) (*GetTurnReply, error)
 	GetConfig(ctx context.Context, in *MeRequest, opts ...grpc.CallOption) (*ConfigReply, error)
 	SetConfig(ctx context.Context, in *SetConfigRequest, opts ...grpc.CallOption) (*ConfigReply, error)
@@ -218,6 +220,16 @@ func (c *coreServiceClient) CreateTurnStream(ctx context.Context, in *CreateTurn
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type CoreService_CreateTurnStreamClient = grpc.ServerStreamingClient[TurnItem]
 
+func (c *coreServiceClient) ListTurns(ctx context.Context, in *ListTurnsRequest, opts ...grpc.CallOption) (*ListTurnsReply, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListTurnsReply)
+	err := c.cc.Invoke(ctx, CoreService_ListTurns_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *coreServiceClient) GetTurn(ctx context.Context, in *GetTurnRequest, opts ...grpc.CallOption) (*GetTurnReply, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetTurnReply)
@@ -266,6 +278,7 @@ type CoreServiceServer interface {
 	CreateThread(context.Context, *CreateThreadRequest) (*ThreadReply, error)
 	CreateTurn(context.Context, *CreateTurnRequest) (*CreateTurnReply, error)
 	CreateTurnStream(*CreateTurnRequest, grpc.ServerStreamingServer[TurnItem]) error
+	ListTurns(context.Context, *ListTurnsRequest) (*ListTurnsReply, error)
 	GetTurn(context.Context, *GetTurnRequest) (*GetTurnReply, error)
 	GetConfig(context.Context, *MeRequest) (*ConfigReply, error)
 	SetConfig(context.Context, *SetConfigRequest) (*ConfigReply, error)
@@ -320,6 +333,9 @@ func (UnimplementedCoreServiceServer) CreateTurn(context.Context, *CreateTurnReq
 }
 func (UnimplementedCoreServiceServer) CreateTurnStream(*CreateTurnRequest, grpc.ServerStreamingServer[TurnItem]) error {
 	return status.Errorf(codes.Unimplemented, "method CreateTurnStream not implemented")
+}
+func (UnimplementedCoreServiceServer) ListTurns(context.Context, *ListTurnsRequest) (*ListTurnsReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListTurns not implemented")
 }
 func (UnimplementedCoreServiceServer) GetTurn(context.Context, *GetTurnRequest) (*GetTurnReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTurn not implemented")
@@ -596,6 +612,24 @@ func _CoreService_CreateTurnStream_Handler(srv interface{}, stream grpc.ServerSt
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type CoreService_CreateTurnStreamServer = grpc.ServerStreamingServer[TurnItem]
 
+func _CoreService_ListTurns_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListTurnsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CoreServiceServer).ListTurns(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CoreService_ListTurns_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CoreServiceServer).ListTurns(ctx, req.(*ListTurnsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _CoreService_GetTurn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTurnRequest)
 	if err := dec(in); err != nil {
@@ -708,6 +742,10 @@ var CoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateTurn",
 			Handler:    _CoreService_CreateTurn_Handler,
+		},
+		{
+			MethodName: "ListTurns",
+			Handler:    _CoreService_ListTurns_Handler,
 		},
 		{
 			MethodName: "GetTurn",
